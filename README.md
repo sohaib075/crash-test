@@ -163,7 +163,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production --profile h
 ```
 
 ### Option B: Render (one click)
-In the Render dashboard, choose **New → Blueprint** and pick this repo. `render.yaml` creates the web service (from the Dockerfile) and a PostgreSQL database, wires `DATABASE_URL`, and generates `APP_PASSWORD` (find it in the service's **Environment** tab). Enter `GRAPH8_API_KEY`, `GRAPH8_BASE_URL` and `GRAPH8_WORKSPACE_ID` when asked.
+Free: create a free PostgreSQL at [Neon](https://neon.tech) and copy its **direct** connection string (connection pooling off). In the Render dashboard, choose **New → Blueprint** and pick this repo. `render.yaml` creates the web service on Render's free plan (from the Dockerfile) and generates `APP_PASSWORD` (find it in the service's **Environment** tab). Paste the Neon string as `DATABASE_URL`, and enter `GRAPH8_API_KEY`, `GRAPH8_BASE_URL` (empty for a live key) and `GRAPH8_WORKSPACE_ID` when asked. The free instance sleeps after 15 idle minutes; open it once before a demo.
 
 ### Option C: Railway, Fly.io or any container host
 Deploy the `Dockerfile`, attach a PostgreSQL database, and set the variables above. No other setup is needed.
