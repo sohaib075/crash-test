@@ -312,6 +312,21 @@ describe("audit: numbers", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
+  it("report: running the same checks again doesn't multiply the problems", async () => {
+    await startRun(queue, { testIds: ["T13"] });
+    await drain();
+    const once = await buildReport();
+    await startRun(queue, { testIds: ["T13"] });
+    await drain();
+    const twice = await buildReport();
+    expect(once.failures).toBeGreaterThan(0);
+    expect(twice.testsRun).toBe(once.testsRun);
+    expect(twice.failures).toBe(once.failures);
+    const bill = (r: typeof once) => r.data.byArea.find((a) => a.area === "BILL")!;
+    expect(bill(twice).failures).toBe(bill(once).failures);
+    expect(bill(twice).tests).toBe(bill(once).tests);
+  });
+
   it("health: a later partial run keeps earlier failures of other tests", async () => {
     await setModes({ PAUSE_SEQUENCE: "APPROVE" }); // keep Q4 live so the partial run can target it
     await startRun(queue, { testIds: ["T1", "T3"] });

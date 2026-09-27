@@ -8,7 +8,7 @@ export function templateReport(n: ReportNumbers) {
   const s = n.failures === 1 ? "" : "s";
   return [
     `Crash Test ran ${n.testsRun} checks across selling, booking and billing and found ${n.failures} problem${s}.`,
-    `${n.autoFixed} were fixed and re-tested, protecting ${n.leadsProtected} leads and ${money} of open pipeline.`,
+    `${n.autoFixed} were fixed and re-tested, protecting ${n.leadsProtected} leads. The problems caught touch ${money} of open pipeline.`,
     n.topIssue ? `Top issue: ${n.topIssue}` : "Nothing needs your attention right now.",
   ].join(" ");
 }

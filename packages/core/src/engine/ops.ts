@@ -131,9 +131,15 @@ function topIssues<T extends { testId: string; targetId: string; pipelineAtRisk:
 export async function buildReport(days = 7): Promise<ReportDTO> {
   const periodEnd = new Date();
   const periodStart = new Date(Date.now() - days * 864e5);
-  const results = await prisma.testResult.findMany({ where: { run: { startedAt: { gte: periodStart }, trigger: { in: ["MANUAL", "GATE"] } } }, include: { run: true } });
+  const results = await prisma.testResult.findMany({ where: { run: { startedAt: { gte: periodStart }, trigger: { in: ["MANUAL", "GATE"] } } }, include: { run: true }, orderBy: { createdAt: "desc" } });
   const failedFirst = results.filter((r) => ["FAIL", "NEEDS_APPROVAL", "FIXED"].includes(r.status));
   const fixed = results.filter((r) => r.status === "FIXED");
+  // Counts are per check (test + target), so re-running the same checks doesn't multiply the problems.
+  const key = (r: { testId: string; targetId: string }) => `${r.testId}|${r.targetId}`;
+  const checks = [...new Map(results.map((r) => [key(r), r] as const).reverse()).values()];
+  const failedKeys = new Set(failedFirst.map(key));
+  const fixedKeys = new Set(fixed.map(key));
+  const inArea = (area: Area) => (r: { area: string }) => r.area === area;
   const leadsProtected = distinctLeads(fixed);
   // Protected pipeline: distinct open deals behind fixed results, plus deals whose quote was flagged.
   const protectedRows = [...fixed, ...results.filter((r) => r.testId === "T13" && r.status !== "PASS" && r.status !== "FIXED")];
@@ -146,13 +152,14 @@ export async function buildReport(days = 7): Promise<ReportDTO> {
   }
   const pipelineSaved = [...amounts.values()].reduce((a, b) => a + b, 0);
   const top = [...failedFirst].sort((a, b) => Number(b.pipelineAtRisk ?? 0) - Number(a.pipelineAtRisk ?? 0))[0];
-  const numbers = { testsRun: results.length, failures: failedFirst.length, autoFixed: fixed.length, leadsProtected, pipelineSaved, topIssue: top ? (top.problem ?? top.summary ?? undefined) : undefined };
+  const numbers = { testsRun: checks.length, failures: failedKeys.size, autoFixed: fixedKeys.size, leadsProtected, pipelineSaved, topIssue: top ? (top.problem ?? top.summary ?? undefined) : undefined };
   const summary = await reportSummary(numbers);
   const byArea = (["SELL", "BOOK", "BILL", "HYGIENE"] as Area[]).map((area) => ({
-    area, tests: results.filter((r) => r.area === area).length,
-    failures: failedFirst.filter((r) => r.area === area).length, fixed: fixed.filter((r) => r.area === area).length,
-    passed: results.filter((r) => r.area === area && r.status === "PASS").length,
-    errors: results.filter((r) => r.area === area && r.status === "ERROR").length,
+    area, tests: checks.filter(inArea(area)).length,
+    failures: checks.filter((r) => inArea(area)(r) && failedKeys.has(key(r))).length,
+    fixed: checks.filter((r) => inArea(area)(r) && fixedKeys.has(key(r))).length,
+    passed: checks.filter((r) => inArea(area)(r) && r.status === "PASS" && !fixedKeys.has(key(r))).length,
+    errors: checks.filter((r) => inArea(area)(r) && r.status === "ERROR").length,
   }));
   const latest = await prisma.healthScore.findMany({ distinct: ["sequenceId"], orderBy: { createdAt: "desc" }, include: { sequence: true } });
   const data = {
@@ -182,7 +189,7 @@ export async function saveReportToGraph8(id: string) {
   const r = await prisma.report.findUniqueOrThrow({ where: { id } });
   if (r.graph8TaskId) return reportDTO(r);
   const d = reportDTO(r);
-  const body = `${r.summary}\n\nTests run: ${r.testsRun}\nFailures: ${r.failures}\nFixed and re-tested: ${r.autoFixed}\nLeads protected: ${r.leadsProtected}\nPipeline protected: $${Math.round(Number(r.pipelineSaved)).toLocaleString("en-US")}\n\n${d.data.topIssues.map((i) => `• ${i.testName} — ${i.target}: ${i.summary}`).join("\n")}`;
+  const body = `${r.summary}\n\nTests run: ${r.testsRun}\nFailures: ${r.failures}\nFixed and re-tested: ${r.autoFixed}\nLeads protected: ${r.leadsProtected}\nPipeline caught: $${Math.round(Number(r.pipelineSaved)).toLocaleString("en-US")}\n\n${d.data.topIssues.map((i) => `• ${i.testName} — ${i.target}: ${i.summary}`).join("\n")}`;
   const taskId = await getBackend().createTask({ title: `Crash Test Monday report (${r.periodEnd.toDateString()})`, body });
   return reportDTO(await prisma.report.update({ where: { id }, data: { graph8TaskId: taskId } }));
 }

@@ -18,7 +18,7 @@ export function ReportCard({ r }: { r: ReportDTO }) {
         <StatTile label="Problems found" value={r.failures} tone={r.failures ? "text-fail" : ""} />
         <StatTile label="Fixed & re-tested" value={r.autoFixed} tone="text-pass" />
         <StatTile label="Leads protected" value={r.leadsProtected} />
-        <StatTile label="Pipeline protected" value={r.pipelineSaved} format={(n) => money(n, true)} tone="text-action" />
+        <StatTile label="Pipeline caught" value={r.pipelineSaved} format={(n) => money(n, true)} tone="text-action" />
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="By area">

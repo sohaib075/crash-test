@@ -1,6 +1,6 @@
 "use client";
 
-import type { GateEventDTO, Settings } from "@crash/shared";
+import type { GateEventDTO, Settings, WorkspaceDTO } from "@crash/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, ShieldX, Timer } from "lucide-react";
 import Link from "next/link";
@@ -14,6 +14,8 @@ export default function GatePage() {
   const toast = useToast();
   const ev = useQuery({ queryKey: ["gate"], queryFn: () => api<GateEventDTO[]>("/api/gate/events"), refetchInterval: 10_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/api/settings") });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace") });
+  const liveKey = ws.data ? !ws.data.sandbox : false;
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => patch("/api/gate", { enabled }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["settings"] }); qc.invalidateQueries({ queryKey: ["workspace"] }); },
@@ -26,7 +28,9 @@ export default function GatePage() {
         <div>
           <h1 className="font-display text-2xl font-bold">Pre-flight gate</h1>
           <p className="mt-1 max-w-2xl text-muted">
-            Every {settings.data?.gatePollSec ?? 20} seconds Crash Test snapshots each live sequence. When someone (or an AI agent) edits a step, the content check runs on that sequence. If it fails, the sequence is paused until it passes.
+            Every {settings.data?.gatePollSec ?? 20} seconds Crash Test snapshots each live sequence. When someone (or an AI agent) edits a step, the content check runs on that sequence. {liveKey
+              ? "If it fails, the change is flagged and pausing the sequence waits for your approval (live key: nothing changes by itself)."
+              : "If it fails, the sequence is paused until it passes."}
           </p>
         </div>
         <button

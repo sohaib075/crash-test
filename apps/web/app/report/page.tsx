@@ -52,7 +52,7 @@ export default function ReportPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold">Monday report</h1>
-          <p className="text-sm text-muted">What ran, what broke, what we fixed, and the leads and pipeline that protected.</p>
+          <p className="text-sm text-muted">What ran, what broke, what we fixed, and the leads and pipeline it caught.</p>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="outline" loading={build.isPending} onClick={() => build.mutate()}><RefreshCw className="h-4 w-4" /> Build now</Button>
