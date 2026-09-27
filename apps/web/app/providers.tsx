@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 import { motion } from "framer-motion";
 import { CheckCircle2, Info, TriangleAlert, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { API } from "@/lib/api";
 
@@ -70,9 +71,13 @@ function LiveBridge({ children, push }: { children: React.ReactNode; push: (t: O
   const listeners = useRef(new Set<Listener>());
   const [connected, setConnected] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
+  // Shared read-only reports (/r/…) are public: no live connection to the private API there.
+  const shared = usePathname()?.startsWith("/r/") ?? false;
 
   useEffect(() => {
-    const s = io(API, { transports: ["websocket", "polling"] });
+    if (shared) return;
+    // Polling first, then upgrade to a websocket: works directly and through the web app's proxy.
+    const s = API ? io(API) : io();
     s.on("connect", () => {
       setConnected(true);
       setSocket(s);
@@ -95,7 +100,7 @@ function LiveBridge({ children, push }: { children: React.ReactNode; push: (t: O
         qc.invalidateQueries({ queryKey: ["workspace"] });
       }
       // Sequence pages show history, health and gate events: refresh them on any of those.
-      if (e.type === "run:updated" || e.type === "health:updated" || e.type.startsWith("gate:") || e.type.startsWith("fix:") || e.type === "result:updated") {
+      if (e.type === "run:updated" || e.type === "health:updated" || e.type.startsWith("gate:") || e.type === "fix:applied" || e.type === "fix:undone") {
         qc.invalidateQueries({ queryKey: ["sequence"] });
       }
       if (e.type === "toast") push({ tone: e.tone, message: e.message, href: e.runId ? `/runs/${e.runId}${e.resultId ? `?result=${e.resultId}` : ""}` : undefined });
@@ -104,7 +109,7 @@ function LiveBridge({ children, push }: { children: React.ReactNode; push: (t: O
     return () => {
       s.close();
     };
-  }, [qc, push]);
+  }, [qc, push, shared]);
 
   const subscribe = useCallback((fn: Listener) => {
     listeners.current.add(fn);

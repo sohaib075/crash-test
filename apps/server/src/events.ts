@@ -5,11 +5,25 @@ import pg from "pg";
 import type { Server } from "socket.io";
 
 export async function bridgeEvents(io: Server) {
+  let delay = 2000;
+  // Reconnect with backoff (e.g. a managed database restarting); never crash the API over it.
+  const reconnect = () =>
+    setTimeout(() => {
+      connect().then(() => (delay = 2000)).catch((err) => {
+        log.warn({ err }, "LISTEN reconnect failed; retrying");
+        delay = Math.min(delay * 2, 30_000);
+        reconnect();
+      });
+    }, delay);
   const connect = async () => {
     const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    let lost = false;
     client.on("error", (err) => {
+      if (lost) return;
+      lost = true;
       log.warn({ err }, "LISTEN connection lost; reconnecting");
-      setTimeout(connect, 2000);
+      client.end().catch(() => {});
+      reconnect();
     });
     await client.connect();
     await client.query(`LISTEN ${CHANNEL}`);

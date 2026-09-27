@@ -1,0 +1,62 @@
+# Production on any server with Docker (VPS, EC2, Hetzner…):
+#   cp .env.production.example .env.production   # fill in the values
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# With a domain and automatic HTTPS (ports 80/443 open, DNS pointing here):
+#   docker compose -f docker-compose.prod.yml --env-file .env.production --profile https up -d --build
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-crashtest}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: while a new volume initialises, Postgres runs a socket-only server first.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      # The database above: the app builds (and encodes) DATABASE_URL from POSTGRES_* itself,
+      # so any POSTGRES_PASSWORD works. Leave DATABASE_URL unset in .env.production.
+      POSTGRES_HOST: db
+      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env.production (at least 12 characters)}
+      PORT: "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # With --profile https set APP_BIND=127.0.0.1, so plain HTTP isn't reachable from outside.
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
+
+  # Optional HTTPS in front of the app (Let's Encrypt), enabled with --profile https.
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    restart: unless-stopped
+    environment:
+      # Required with --profile https (compose reads this even when the profile is off, so no :? here).
+      DOMAIN: ${DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}

@@ -69,7 +69,8 @@ export function wsOf(run: { plan: Prisma.JsonValue }): Workspace {
 export async function planRun(q: Queue, runId: string) {
   const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
   if (run.status !== "QUEUED" && run.status !== "PLANNING") return;
-  await prisma.run.update({ where: { id: runId }, data: { status: "PLANNING" } });
+  const planning = await prisma.run.updateMany({ where: { id: runId, status: { in: ["QUEUED", "PLANNING"] } }, data: { status: "PLANNING" } });
+  if (!planning.count) return;
   await publish({ type: "run:updated", runId, status: "PLANNING" });
 
   const st = await getBackend().sandboxStatus();
@@ -110,7 +111,9 @@ export async function planRun(q: Queue, runId: string) {
       update: {},
     });
   }
-  await prisma.run.update({ where: { id: runId }, data: { status: "RUNNING" } });
+  // Only a run still being planned may start: Reset demo can stop it during discovery or the AI plan.
+  const started = await prisma.run.updateMany({ where: { id: runId, status: "PLANNING" }, data: { status: "RUNNING" } });
+  if (!started.count) return stopOpenResults(runId);
   await publish({ type: "run:updated", runId, status: "RUNNING" });
   await runLog(runId, `Planned ${planned.tests.length} checks (${planned.source === "rules" ? "rules" : "graph8 AI"}).`);
 
@@ -136,7 +139,12 @@ async function saveOutcome(resultId: string, o: Outcome, ws: Workspace, testId: 
   const pipeline = o.pipelineAtRisk ?? deals.reduce((n, d) => n + (d.amount ?? 0), 0);
   const dealIds = o.dealIds ?? deals.map((d) => d.id);
   const passLine = o.actual.charAt(0).toUpperCase() + o.actual.slice(1);
-  const text = o.pass ? { summary: /[.!?]$/.test(passLine) ? passLine : `${passLine}.`, whyItMatters: null as string | null } : await explain(testId, o.facts);
+  const line = /[.!?]$/.test(passLine) ? passLine : `${passLine}.`;
+  // A check that couldn't look found nothing: no problem sentence, no leads or pipeline.
+  const clean = o.pass || !!o.inconclusive;
+  const text = o.pass ? { summary: line, whyItMatters: null as string | null }
+    : o.inconclusive ? { summary: `Couldn't check: ${line}`, whyItMatters: null as string | null }
+    : await explain(testId, o.facts);
   await prisma.$transaction([
     prisma.evidence.deleteMany({ where: { resultId } }),
     prisma.evidence.createMany({
@@ -149,8 +157,8 @@ async function saveOutcome(resultId: string, o: Outcome, ws: Workspace, testId: 
       where: { id: resultId },
       data: {
         expected: o.expected, actual: o.actual, summary: text.summary, whyItMatters: text.whyItMatters,
-        leadsAffected: o.pass ? 0 : leads, pipelineAtRisk: o.pass ? 0 : pipeline, dealIds: o.pass ? [] : dealIds,
-        contactIds: o.pass ? [] : (o.affectedContactIds ?? []), problem: o.pass ? null : text.summary,
+        leadsAffected: clean ? 0 : leads, pipelineAtRisk: clean ? 0 : pipeline, dealIds: clean ? [] : dealIds,
+        contactIds: clean ? [] : (o.affectedContactIds ?? []), problem: clean ? null : text.summary,
         goalSec: o.goalSec, actualSec: o.actualSec,
       },
     }),
@@ -241,8 +249,10 @@ async function proposeFixes(q: Queue, resultId: string, target: Target, s: Scrat
   await prisma.testResult.update({ where: { id: resultId }, data: { state: s as Prisma.InputJsonValue } });
   const m = await modes();
   const isGate = r.run.trigger === "GATE";
-  // Existing fixes (a retried job) are kept, not duplicated.
-  const existing = await prisma.fix.findMany({ where: { resultId } });
+  // Existing fixes (a retried job) are kept, not duplicated. An undone or skipped
+  // one doesn't count: a re-check that finds the problem again proposes it again.
+  const existing = (await prisma.fix.findMany({ where: { resultId } }))
+    .filter((f) => f.status !== "UNDONE" && !(f.status === "REJECTED" && f.mode !== "OFF"));
   for (const p of proposals) {
     if (existing.some((f) => f.action === p.action && f.targetId === p.targetId)) continue;
     // The pre-flight gate exists to block: it pauses on its own (§10).
@@ -284,10 +294,12 @@ async function applyAutopilot(resultId: string) {
 
 /** Phase 2: apply autopilot fixes one by one, then re-test everything that changed, in parallel. */
 export async function runFixPhase(q: Queue, runId: string) {
-  const run = await prisma.run.findUnique({ where: { id: runId } });
-  if (run?.status !== "RUNNING") return; // stopped (e.g. by Reset demo)
+  const live = async () => (await prisma.run.findUnique({ where: { id: runId } }))?.status === "RUNNING";
+  if (!(await live())) return; // stopped (e.g. by Reset demo)
+  // Results with Autopilot fixes to apply, plus any a restarted worker left held mid-phase.
   const results = await prisma.testResult.findMany({
-    where: { runId, fixes: { some: { mode: "AUTOPILOT", status: "PROPOSED" } } },
+    where: { runId, OR: [{ fixes: { some: { mode: "AUTOPILOT", status: "PROPOSED" } } }, { status: "RUNNING" }] },
+    include: { fixes: true },
     orderBy: { createdAt: "asc" },
   });
   if (results.length) await runLog(runId, `${results.length} problem${results.length === 1 ? "" : "s"} to fix on Autopilot. Fixing, then re-testing.`);
@@ -296,13 +308,30 @@ export async function runFixPhase(q: Queue, runId: string) {
   // score health early and clean up buyers mid re-test).
   for (const r of results) await setStatus(r.id, "RUNNING");
   const changed = new Map<string, boolean>();
-  for (const r of results) changed.set(r.id, await applyAutopilot(r.id));
-  await Promise.all(results.map((r) => settleResult(q, r.id, { retest: changed.get(r.id) ?? false }).catch(async (err) => {
-    log.error({ err }, "settle failed");
-    await setStatus(r.id, await fallbackStatus(r.id)).catch(() => {});
-  })));
+  for (const r of results) {
+    // Reset demo mid-phase: stop applying (it already undid what was applied).
+    if (!(await live())) return stopOpenResults(runId);
+    const resumed = r.fixes.some((f) => f.status === "APPLIED" && !RECORD_ONLY.has(f.action));
+    changed.set(r.id, (await applyAutopilot(r.id)) || resumed);
+  }
+  if (!(await live())) return stopOpenResults(runId);
+  await Promise.all(results.map((r) => settleResult(q, r.id, { retest: changed.get(r.id) ?? false }).catch((err) => settleFailed(q, r.id, err))));
   await refreshTotals(runId);
   await q.send(JOBS.finalize, { runId }, { singletonKey: `fin-${runId}` });
+}
+
+/** A settle threw: give a still-held result an honest status and let the run finish. */
+async function settleFailed(q: Queue, resultId: string, err: unknown) {
+  log.error({ err, resultId }, "settle failed");
+  const cur = await prisma.testResult.findUnique({ where: { id: resultId }, include: { run: true } }).catch(() => null);
+  if (cur?.status === "RUNNING") await setStatus(resultId, await fallbackStatus(resultId)).catch(() => {});
+  if (cur?.run.status === "RUNNING") await maybeFinalize(q, cur.runId).catch(() => {});
+}
+
+/** A stopped run's open results say why they never finished. */
+async function stopOpenResults(runId: string) {
+  const run = await prisma.run.findUnique({ where: { id: runId } });
+  await prisma.testResult.updateMany({ where: { runId, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "ERROR", error: run?.error ?? "Run was stopped" } });
 }
 
 /** Status a result falls back to when nothing proves it fixed. */
@@ -378,7 +407,10 @@ export async function retest(resultId: string, opts: { s?: Scratch; mode?: "afte
       } else if (o.pass) {
         await saveOutcome(resultId, o, ws, testId);
         // The problem is gone: its waiting proposals no longer apply.
-        await prisma.fix.updateMany({ where: { resultId, status: "PROPOSED", appliedAt: null }, data: { status: "REJECTED", error: "Not needed: the re-check passed." } });
+        await prisma.fix.updateMany({
+          where: { resultId, OR: [{ status: "PROPOSED", appliedAt: null }, { status: "FAILED" }] },
+          data: { status: "REJECTED", error: "Not needed: the re-check passed." },
+        });
         await setStatus(resultId, "PASS", { retestStatus: "PASS", error: null });
       } else if (held?.pass && !held.inconclusive) {
         // The problem is still there (e.g. the copy), but the fix in place still contains it
@@ -392,13 +424,22 @@ export async function retest(resultId: string, opts: { s?: Scratch; mode?: "afte
         if (!wasFixed && opts.q) await proposeFixes(opts.q, resultId, target, fresh, o);
         else await setStatus(resultId, await fallbackStatus(resultId));
       }
-      const verdict = o.inconclusive ? "couldn't check" : o.pass ? "passes" : held?.pass ? "still contained by its fix" : "still failing";
+      // Say what the result is now: a new failure may already have been fixed on Autopilot.
+      const now = (await prisma.testResult.findUnique({ where: { id: resultId } }))?.status;
+      const verdict = o.inconclusive ? "couldn't check"
+        : o.pass ? "passes"
+        : held?.pass ? "still contained by its fix"
+        : now === "FIXED" ? "found a problem and fixed it"
+        : now === "NEEDS_APPROVAL" ? "fails; a fix is waiting for approval"
+        : "still failing";
       await runLog(r.runId, `Re-checked ${TEST_BY_ID[testId].name} on ${r.targetName}: ${verdict}`);
-      await publish({ type: "toast", tone: o.pass || held?.pass ? "pass" : "fail", message: `${TEST_BY_ID[testId].name} on ${r.targetName}: ${verdict}`, runId: r.runId, resultId });
+      await publish({ type: "toast", tone: o.pass || held?.pass || now === "FIXED" ? "pass" : "fail", message: `${TEST_BY_ID[testId].name} on ${r.targetName}: ${verdict}`, runId: r.runId, resultId });
       return;
     }
 
-    const ok = o.pass && !o.inconclusive;
+    // An Undo can land while this re-test runs: FIXED needs a remedial fix still in place.
+    const stillApplied = (await prisma.fix.findMany({ where: { resultId, status: "APPLIED" } })).some((f) => !RECORD_ONLY.has(f.action));
+    const ok = o.pass && !o.inconclusive && stillApplied;
     const facts = { ...(scratch as Record<string, unknown>), ...o.facts, sequence: r.targetName, lower: (scratch.lower as string) ?? undefined, owner: scratch.owner as string, count: r.leadsAffected ?? undefined } as Record<string, string | number | undefined>;
     // Name the buyer who was actually harmed, not the fresh re-test buyer.
     const original = (scratch.buyers ?? [])[0]?.name;
@@ -412,7 +453,10 @@ export async function retest(resultId: string, opts: { s?: Scratch; mode?: "afte
     await runLog(r.runId, `Re-test ${ok ? "passed" : "failed"}: ${TEST_BY_ID[testId].name} on ${r.targetName}`);
     await publish({ type: "toast", tone: ok ? "pass" : "fail", message: ok ? `Fixed: ${TEST_BY_ID[testId].name} in ${r.targetName}` : `Still failing: ${r.targetName}`, runId: r.runId, resultId });
   } catch (err) {
-    await setStatus(resultId, await fallbackStatus(resultId), { retestStatus: "ERROR", error: err instanceof Error ? err.message : String(err) });
+    const error = err instanceof Error ? err.message : String(err);
+    // A re-check that couldn't run keeps the verdict it had; an unproven fix is not FIXED.
+    if (mode === "recheck") await setStatus(resultId, r.status, { retestStatus: "ERROR", error });
+    else await setStatus(resultId, await fallbackStatus(resultId), { retestStatus: "ERROR", error });
   }
 }
 
@@ -432,10 +476,7 @@ export async function approveFix(q: Queue, fixId: string) {
     /* the fix is marked FAILED with its error; the card offers Retry */
   } finally {
     const r = await prisma.testResult.findUniqueOrThrow({ where: { id: before.resultId }, include: { run: true } });
-    await settleResult(q, before.resultId, { retest: applied && !RECORD_ONLY.has(before.action) }).catch(async (err) => {
-      log.error({ err }, "settle failed");
-      await setStatus(before.resultId, await fallbackStatus(before.resultId)).catch(() => {});
-    });
+    await settleResult(q, before.resultId, { retest: applied && !RECORD_ONLY.has(before.action) }).catch((err) => settleFailed(q, before.resultId, err));
     // Approvals often land after the run finished and cleaned up: tidy the re-test buyers.
     if (r.run.status === "DONE" && applied && !RECORD_ONLY.has(before.action)) await q.send(JOBS.cleanup, { runId: r.runId }, { startAfter: 1 });
     await refreshTotals(r.runId);
@@ -450,7 +491,11 @@ export async function rejectFix(q: Queue, fixId: string) {
     const state = fix.status === "PROPOSED" ? "being applied" : fix.status.toLowerCase();
     throw new AppError(409, "FIX_NOT_PROPOSED", `This fix is ${state}, so it can't be skipped.`, fix.status === "APPLIED" ? "Use Undo instead." : undefined);
   }
-  await settleResult(q, fix.resultId, { retest: false });
+  // If a check, re-test or another apply holds this result, that holder settles it
+  // (the skipped fix is already out of its count). Settling here would release the hold.
+  const res = await prisma.testResult.findUniqueOrThrow({ where: { id: fix.resultId }, include: { fixes: true } });
+  const held = res.status === "RUNNING" || res.status === "QUEUED" || res.fixes.some((f) => f.status === "PROPOSED" && f.appliedAt);
+  if (!held) await settleResult(q, fix.resultId, { retest: false });
   const r = await prisma.testResult.findUniqueOrThrow({ where: { id: fix.resultId } });
   await refreshTotals(r.runId);
 }
@@ -458,8 +503,13 @@ export async function rejectFix(q: Queue, fixId: string) {
 /** Undo a fix, then make the result tell the truth about it (RB-4). */
 export async function undoAndResettle(fixId: string) {
   const fix = await undoFix(fixId);
-  if (RECORD_ONLY.has(fix.action)) return fix;
-  const r = await prisma.testResult.findUniqueOrThrow({ where: { id: fix.resultId }, include: { fixes: true } });
+  if (!RECORD_ONLY.has(fix.action)) await resettleAfterUndo(fix.resultId);
+  return fix;
+}
+
+/** After a remedial fix is undone: a FIXED result with no fix left in place is failing again. */
+export async function resettleAfterUndo(resultId: string) {
+  const r = await prisma.testResult.findUniqueOrThrow({ where: { id: resultId }, include: { fixes: true } });
   const stillFixed = r.fixes.some((f) => f.status === "APPLIED" && !RECORD_ONLY.has(f.action));
   if (r.status === "FIXED" && !stillFixed) {
     await setStatus(r.id, await fallbackStatus(r.id), {
@@ -469,7 +519,6 @@ export async function undoAndResettle(fixId: string) {
     });
     await refreshTotals(r.runId);
   }
-  return fix;
 }
 
 /** "Re-run this test" from the drawer, as a worker job. */
@@ -478,8 +527,11 @@ export async function retestJob(q: Queue, resultId: string) {
   await retest(resultId, { mode: "recheck", q });
   const after = await prisma.run.findUniqueOrThrow({ where: { id: r.runId } });
   if (after.status === "RUNNING") await maybeFinalize(q, r.runId);
-  // Only a finished run gets tidied; a live run still needs its other buyers.
-  else await cleanupRun(r.runId);
+  // Only a finished run gets tidied (and re-scored); a live run still needs its other buyers.
+  else {
+    await cleanupRun(r.runId);
+    if (after.status === "DONE") await computeHealth(r.runId);
+  }
   await refreshTotals(r.runId);
 }
 
@@ -564,16 +616,25 @@ export async function finalizeRun(q: Queue, runId: string) {
 export async function computeHealth(runId: string) {
   const run = await prisma.run.findUniqueOrThrow({ where: { id: runId }, include: { results: true } });
   const ws = wsOf(run);
-  const failedFirst = run.results.filter((r) => ["FAIL", "NEEDS_APPROVAL", "FIXED"].includes(r.status));
   const weights = Object.fromEntries((await prisma.testDefinition.findMany()).map((d) => [d.id, d.weight]));
   for (const s of ws.sequences) {
-    const hits = failedFirst.filter((r) => r.targetId === s.id || r.targetId.split("+").includes(s.id));
-    const tested = run.results.some((r) => r.targetId === s.id || r.targetId.split("+").includes(s.id));
-    if (!tested) continue;
-    const score = Math.max(0, 100 - hits.reduce((n, r) => n + (weights[r.testId] ?? TEST_BY_ID[r.testId as TestId].weight), 0));
+    const touches = (targetId: string) => targetId === s.id || targetId.split("+").includes(s.id);
+    if (!run.results.some((r) => touches(r.targetId))) continue;
+    // Health is the latest observation of each test on this sequence, from any run: a gate
+    // run that only re-checks the copy must not erase an opt-out leak found earlier.
+    const rows = (await prisma.testResult.findMany({
+      where: { targetId: { contains: s.id }, status: { in: ["PASS", "FAIL", "NEEDS_APPROVAL", "FIXED"] } },
+      orderBy: { updatedAt: "desc" },
+      take: 500,
+    })).filter((r) => touches(r.targetId));
+    const latest = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) if (!latest.has(`${r.testId}|${r.targetId}`)) latest.set(`${r.testId}|${r.targetId}`, r);
+    // Each failing test counts once, even when several T2 pairs include this sequence.
+    const failing = [...new Set([...latest.values()].filter((r) => r.status !== "PASS").map((r) => r.testId))];
+    const score = Math.max(0, 100 - failing.reduce((n, id) => n + (weights[id] ?? TEST_BY_ID[id as TestId].weight), 0));
     const seq = await prisma.sequence.findUnique({ where: { graph8Id: s.id } });
     if (!seq) continue;
-    const reasons = [...new Set(hits.map((r) => TEST_BY_ID[r.testId as TestId].name.toLowerCase()))];
+    const reasons = failing.map((id) => TEST_BY_ID[id as TestId].name.toLowerCase());
     await prisma.healthScore.upsert({
       where: { sequenceId_runId: { sequenceId: seq.id, runId } },
       create: { sequenceId: seq.id, runId, score, band: band(score), reasons },
@@ -637,7 +698,8 @@ async function resolveGate(runId: string) {
   const results = await prisma.testResult.findMany({ where: { runId } });
   const bad = results.find((r) => ["FAIL", "NEEDS_APPROVAL", "FIXED"].includes(r.status));
   if (bad) {
-    const message = `"${ev.sequence.name}" was edited and failed the ${TEST_BY_ID[bad.testId as TestId].name.toLowerCase()}. ${bad.status === "FIXED" || bad.status === "NEEDS_APPROVAL" ? "Sequence paused." : ""}`.trim();
+    const paused = await prisma.fix.count({ where: { resultId: bad.id, action: "PAUSE_SEQUENCE", status: "APPLIED" } });
+    const message = `"${ev.sequence.name}" was edited and failed the ${TEST_BY_ID[bad.testId as TestId].name.toLowerCase()}. ${paused ? "Sequence paused." : "Not paused: see the check."}`;
     await prisma.gateEvent.update({ where: { id: ev.id }, data: { result: "BLOCKED", resolvedAt: new Date(), message } });
     await publish({ type: "gate:blocked", sequenceId: ev.sequence.graph8Id, name: ev.sequence.name, runId, resultId: bad.id, message });
   } else {

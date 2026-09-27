@@ -7,10 +7,11 @@ import { config } from "../config";
 import { call } from "../graph8/client";
 import { runLog } from "../publish";
 import type { Workspace } from "../types";
-import { getBackend } from "./context";
+import { getBackend, loadSettings } from "./context";
 
 import { rebaseline } from "./gate";
-import { cleanupRun, discoverAndStore, distinctLeads, undoAndResettle } from "./run";
+import { cleanupRun, discoverAndStore, distinctLeads, resettleAfterUndo, undoAndResettle } from "./run";
+import { RECORD_ONLY } from "../tests/registry";
 
 export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO> {
   const checks: ReadyDTO["checks"] = [];
@@ -50,9 +51,11 @@ export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO
 
   try {
     ws = (await discoverAndStore()).ws;
+    // Same rule as the quote check (T13): off by more than the tolerance in Settings.
+    const tol = (await loadSettings()).quoteTolerancePct;
     const mismatched = ws.quotes.filter((q) => {
       const d = ws!.deals.find((x) => x.id === q.dealId);
-      return q.total != null && d?.amount != null && Math.abs(q.total - d.amount) / d.amount > 0.01;
+      return q.total != null && d?.amount != null && d.amount > 0 && (Math.abs(q.total - d.amount) / d.amount) * 100 > tol;
     }).length;
     const ok = ws.sequences.length >= 3 && ws.quotes.length >= 1;
     add("demo", "Demo data present", ok, `${ws.sequences.length} sequences · ${ws.quotes.length} sent quotes (${mismatched} mismatched) · ${ws.bookingLinks.length} booking links · ${ws.deals.length} open deals`);
@@ -80,16 +83,20 @@ export async function demoReset() {
   log.push(`Cleaned up ${cleaned} fake buyers`);
   const applied = await prisma.fix.findMany({ where: { status: "APPLIED" }, orderBy: { appliedAt: "desc" } });
   let undone = 0;
+  const skipped = new Map<string, number>();
   for (const f of applied) {
     try {
       await undoAndResettle(f.id);
       undone++;
     } catch (e) {
-      log.push(`Could not undo ${f.action}: ${(e as Error).message}`);
+      const why = `${f.action}: ${(e as Error).message}`;
+      skipped.set(why, (skipped.get(why) ?? 0) + 1);
       await prisma.fix.update({ where: { id: f.id }, data: { status: "UNDONE", undoneAt: new Date(), error: (e as Error).message } });
+      if (!RECORD_ONLY.has(f.action)) await resettleAfterUndo(f.resultId).catch(() => {});
     }
   }
   log.push(`Undid ${undone} fixes (sequences resumed, planted problems restored)`);
+  for (const [why, n] of skipped) log.push(`Skipped ${n} × ${why}`);
   await discoverAndStore().catch(() => {});
   await rebaseline().catch(() => {});
   log.push("Gate baseline refreshed");
@@ -120,13 +127,13 @@ export async function buildReport(days = 7): Promise<ReportDTO> {
   // Protected pipeline: distinct open deals behind fixed results, plus deals whose quote was flagged.
   const protectedRows = [...fixed, ...results.filter((r) => r.testId === "T13" && r.status !== "PASS" && r.status !== "FIXED")];
   const amounts = new Map<string, number>();
-  let loose = 0;
   for (const r of protectedRows) {
     const ws = r.run.plan ? (r.run.plan as unknown as { ws: Workspace }).ws : null;
-    if (!r.dealIds.length) { loose += Number(r.pipelineAtRisk ?? 0); continue; }
+    // No linked deal (e.g. a quote alone): count the finding once, not once per run.
+    if (!r.dealIds.length) { const k = `finding:${r.testId}|${r.targetId}`; if (!amounts.has(k)) amounts.set(k, Number(r.pipelineAtRisk ?? 0)); continue; }
     for (const id of r.dealIds) if (!amounts.has(id)) amounts.set(id, ws?.deals.find((d) => d.id === id)?.amount ?? 0);
   }
-  const pipelineSaved = [...amounts.values()].reduce((a, b) => a + b, 0) + loose;
+  const pipelineSaved = [...amounts.values()].reduce((a, b) => a + b, 0);
   const top = [...failedFirst].sort((a, b) => Number(b.pipelineAtRisk ?? 0) - Number(a.pipelineAtRisk ?? 0))[0];
   const numbers = { testsRun: results.length, failures: failedFirst.length, autoFixed: fixed.length, leadsProtected, pipelineSaved, topIssue: top ? (top.problem ?? top.summary ?? undefined) : undefined };
   const summary = await reportSummary(numbers);

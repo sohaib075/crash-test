@@ -1,0 +1,26 @@
+# Never send secrets, host-built dependencies or build output into the image.
+# (at every depth: e.g. apps/web/.env.local would bake NEXT_PUBLIC_* values into the build)
+**/.env
+**/.env.*
+!.env.example
+!.env.production.example
+**/node_modules
+# The local embedded-Postgres data (dev data and password hashes) must never ship.
+.pgdata
+**/.pgdata
+data
+**/.next
+**/.turbo
+**/*.tsbuildinfo
+**/*.log
+.git
+.github
+docs
+tests
+*.md
+.gitignore
+.claude
+.qa
+coverage
+Dockerfile
+docker-compose*.yml

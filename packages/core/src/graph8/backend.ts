@@ -36,7 +36,9 @@ async function teamMemberIds(): Promise<Map<string, string> | null> {
   } catch {
     return null; // T4 reports "couldn't check" instead of flagging every owned lead
   }
-  const rows = ((r?.items ?? r?.team_members ?? []) as Any[]);
+  const rows = (Array.isArray(r) ? r : (r?.items ?? r?.team_members ?? r?.members ?? r?.data ?? [])) as Any[];
+  // A workspace always has at least one member: an empty list means we couldn't read it.
+  if (!Array.isArray(rows) || !rows.length) return null;
   const out = new Map<string, string>();
   for (const m of rows) {
     if (m.propelauth_user_id) out.set(String(m.propelauth_user_id), String(m.id));

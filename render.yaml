@@ -1,0 +1,40 @@
+# One-click deploy on Render (Dashboard → New → Blueprint → this repo).
+# Creates the app (Docker) and a PostgreSQL database. Render asks for the
+# values marked `sync: false` when you create the Blueprint.
+# Size: the app runs three Node processes (~400 MB idle). Pick an instance with
+# at least 1 GB of memory (e.g. Standard); 512 MB types can run out of memory.
+# Keep one instance: the worker runs as a singleton.
+services:
+  - type: web
+    name: crash-test
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crash-test-db
+          property: connectionString
+      # Render generates a random password; read it in the service's Environment tab.
+      - key: APP_PASSWORD
+        generateValue: true
+      - key: GRAPH8_API_KEY
+        sync: false
+      - key: GRAPH8_BASE_URL
+        sync: false
+      - key: GRAPH8_WORKSPACE_ID
+        sync: false
+      - key: GRAPH8_AI
+        value: "on"
+      - key: TEST_DOMAIN
+        value: crashtest.example
+      - key: DEMO_OWNER_EMAIL
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+
+databases:
+  - name: crash-test-db
+    databaseName: crashtest
+    # The app uses the internal connection; block access from the internet.
+    ipAllowList: []

@@ -16,7 +16,7 @@ export default function ReportPage() {
   const [link, setLink] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["report"], queryFn: () => api<ReportDTO | null>("/api/reports/latest") });
   const set = (r: ReportDTO) => qc.setQueryData(["report"], r);
-  const build = useMutation({ mutationFn: () => post<ReportDTO>("/api/reports"), onSuccess: set, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
+  const build = useMutation({ mutationFn: () => post<ReportDTO>("/api/reports"), onSuccess: (r) => { set(r); setLink(null); }, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
   const save = useMutation({
     mutationFn: (id: string) => post<ReportDTO>(`/api/reports/${id}/save`),
     onSuccess: (r) => { set(r); toast({ tone: "pass", message: "Saved to graph8 as a task" }); },
@@ -35,6 +35,7 @@ export default function ReportPage() {
         /* no clipboard permission (or not a secure context): show the link instead */
       }
       if (ok) {
+        setLink(null);
         setCopied(true);
         setTimeout(() => setCopied(false), 2500);
         toast({ tone: "info", message: "Read-only link copied" });

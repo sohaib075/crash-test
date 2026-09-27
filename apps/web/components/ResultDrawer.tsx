@@ -26,13 +26,15 @@ function Json({ v }: { v: unknown }) {
   );
 }
 
-function FixRow({ f, onDone }: { f: FixDTO; onDone: () => void }) {
+function FixRow({ f, onDone, busy }: { f: FixDTO; onDone: () => void; busy: boolean }) {
   const toast = useToast();
   const [confirm, setConfirm] = useState(false);
   const apply = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/apply`), onSuccess: () => { toast({ tone: "info", message: `Applying: ${FIX_VERB[f.action]}` }); onDone(); }, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
   const reject = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/reject`), onSuccess: onDone, onError: (e: Error) => { toast({ tone: "fail", message: e.message }); onDone(); } });
   const undo = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/undo`), onSuccess: () => { toast({ tone: "info", message: `Undone: ${FIX_VERB[f.action]}` }); setConfirm(false); onDone(); }, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
-  const statusText = { PROPOSED: "Waiting for approval", APPLIED: "Applied", REJECTED: f.mode === "OFF" ? "Off: report only" : "Skipped", UNDONE: "Undone", FAILED: "Failed" }[f.status];
+  // A proposal someone already started applying (claimed) is not waiting any more.
+  const claimed = f.status === "PROPOSED" && !!f.appliedAt;
+  const statusText = { PROPOSED: claimed ? "Being applied…" : "Waiting for approval", APPLIED: "Applied", REJECTED: f.mode === "OFF" ? "Off: report only" : "Skipped", UNDONE: "Undone", FAILED: "Failed" }[f.status];
   const tone = { PROPOSED: "text-action", APPLIED: "text-pass", REJECTED: "text-faint", UNDONE: "text-muted", FAILED: "text-fail" }[f.status];
   return (
     <div className={`rounded-xl border p-4 ${f.status === "PROPOSED" ? "border-action/50 bg-action/[0.04]" : "border-line-2 bg-lab"}`}>
@@ -49,19 +51,23 @@ function FixRow({ f, onDone }: { f: FixDTO; onDone: () => void }) {
       </div>
       {f.error && <p className={`mt-2 text-xs ${f.status === "UNDONE" ? "text-muted" : "text-fail"}`}>{f.error}</p>}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {f.status === "PROPOSED" && (
+        {/* While the check or its re-test runs, the fix can't change under it. */}
+        {busy && (f.status === "PROPOSED" || f.status === "APPLIED" || f.status === "FAILED") && (
+          <span className="text-xs text-muted">Wait for the check to finish.</span>
+        )}
+        {!busy && f.status === "PROPOSED" && !claimed && (
           <>
             <Button variant="primary" size="sm" loading={apply.isPending} onClick={() => apply.mutate()}>Apply fix</Button>
             <Button variant="ghost" size="sm" loading={reject.isPending} onClick={() => reject.mutate()}>Skip</Button>
           </>
         )}
-        {f.status === "FAILED" && (
+        {!busy && f.status === "FAILED" && (
           <Button variant="outline" size="sm" loading={apply.isPending} onClick={() => apply.mutate()}>Retry fix</Button>
         )}
-        {f.status === "APPLIED" && !confirm && (
+        {!busy && f.status === "APPLIED" && !confirm && (
           <Button variant="outline" size="sm" onClick={() => setConfirm(true)}><RotateCcw className="h-3.5 w-3.5" /> Undo fix</Button>
         )}
-        {f.status === "APPLIED" && confirm && (
+        {!busy && f.status === "APPLIED" && confirm && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line-2 bg-panel px-3 py-2 text-sm">
             <span>Put graph8 back to &quot;before&quot;?</span>
             <Button variant="danger" size="sm" loading={undo.isPending} onClick={() => undo.mutate()}>Yes, undo</Button>
@@ -173,7 +179,7 @@ export function ResultDrawer({ resultId, onClose }: { resultId: string | null; o
                     <section>
                       <h3 className="label mb-2">Fix</h3>
                       <div className="grid gap-3">
-                        {r.fixes.map((f) => <FixRow key={f.id} f={f} onDone={refresh} />)}
+                        {r.fixes.map((f) => <FixRow key={f.id} f={f} onDone={refresh} busy={busy} />)}
                       </div>
                     </section>
                   )}

@@ -12,6 +12,11 @@ export async function getBoss(): Promise<PgBoss> {
   return boss;
 }
 
+/** Stop the queue on shutdown, only if this process ever started it. */
+export async function stopBoss() {
+  if (boss) await boss.stop({ graceful: true, timeout: 5000 }).catch(() => {});
+}
+
 export const queue: Queue = {
   async send(name, data, opts) {
     return (await getBoss()).send(name, data, opts ?? {});

@@ -1,128 +1,192 @@
 # Crash Test
 
-**Crash Test checks your whole graph8 revenue machine before a customer finds the bug:** the sequences that sell, the links that book and the quotes that bill. It runs fake buyers through your real graph8 setup, reads what actually happened from the sandbox outbox and graph8 records, explains each failure in plain English with the leads and pipeline at risk, fixes it on Autopilot or after approval, and proves the fix with a re-test. Results are written back to graph8 as tasks and deal notes, and a pre-flight gate re-tests every sequence edit before it goes live.
+> **graph8 logs what the machine did. Crash Test proves it does what you think.**
 
-> graph8 logs what the machine did. Crash Test proves it does what you think.
+Crash Test checks your whole graph8 revenue machine before a customer finds the bug: the sequences that sell, the links that book, and the quotes that bill. It runs fake buyers through your real graph8 setup, reads what actually happened from the sandbox outbox and graph8 records, explains each failure in plain English with the leads and pipeline at risk, fixes it on Autopilot or after approval, and proves the fix with a re-test. 
 
-**Team:** Usman Hassan · Muhammad Sohaib (graph8 Programmable Revenue Hackathon, 27 Sep 2026)
+Results are written back to graph8 as tasks and deal notes, and a pre-flight gate re-tests every sequence edit before it goes live.
 
-## Run it
+## Table of Contents
+- [About The Project](#about-the-project)
+- [How It Works](#how-it-works)
+- [Platform Coverage](#platform-coverage)
+- [Checks & Tests](#checks--tests)
+- [Getting Started](#getting-started)
+- [Database Configuration](#database-configuration)
+- [Commands](#commands)
+- [Deployment](#deployment)
+- [Safety & Security](#safety--security)
+- [Team](#team)
 
-```bash
-npm install
-cp .env.example .env            # add GRAPH8_API_KEY (sandbox): the only key needed
-npm run dev                     # Postgres 16 + API :4000 + worker + web :3000
-```
+---
 
-`npm run dev` starts everything. It uses an embedded PostgreSQL 16 (real Postgres binaries, no Docker needed), applies the migrations and seeds the defaults. With Docker you can use `docker compose up -d` instead.
+## About The Project
 
-| Command | What it does |
-|---|---|
-| `npm run gates` | Go / no-go checklist (§03) against the real workspace: sandbox, send reaches the outbox, outbox fields, quotes, booking links, deals, credits, scopes, clean-up |
-| `npm run seed:graph8` | Dry run of the demo data (3 sequences with planted problems, prospects, a $15,000 deal with a $12,000 sent quote). Add `-- --apply` to create it in the sandbox |
-| `npm run reset:demo` | Clean up fake buyers, undo every fix, restore the planted problems, rebaseline the gate (same as **/ready → Reset demo**) |
-| `npm test` | Rules, the graph8 contract, the API (Supertest) and acceptance tests E1–E8 on a real Postgres |
-| `npm run typecheck` / `npm run lint` | Strict TypeScript everywhere, ESLint on the web app |
+Crash Test is designed to ensure the integrity of your graph8 platform setup. It automatically discovers issues, plans a test strategy, seeds fake buyers, and tracks the resulting outbound actions. By continuously monitoring the sandbox, outbox, quotes, and booking links, it acts as a guardrail against misconfigurations that could leak revenue or harm prospect relationships.
 
-Open **http://localhost:3000/ready** before a demo. Every line must be green.
+**Key Concepts:**
+- **Checks first, fixes second:** Autopilot fixes wait until every check has finished, ensuring one problem doesn't hide another.
+- **Resumable & Safe:** Every step is saved before and after. Clean-up scripts ensure fake data is always removed.
+- **Honest metrics:** Leads and pipeline numbers are accurately tracked without double-counting.
 
-## Database
+## How It Works
 
-PostgreSQL 16 + Prisma 6 (`packages/db`). pg-boss keeps its job queue in the same database (schema `pgboss`). **`DATABASE_URL` in `.env` is the only setting.**
+**The Engine Loop:** 
+`Discover` → `Plan` → `Seed fake buyers` → `Trigger` → `Observe the outbox` → `Check` → `Fix (Autopilot or Approve)` → `Re-test` → `Write back to graph8` → `Clean up`
 
-| Setup | `DATABASE_URL` | What `npm run dev` does |
-|---|---|---|
-| Built-in (default) | `postgresql://crash:crash@localhost:5432/crashtest` | Starts an embedded PostgreSQL 16 (data in `.pgdata/`), migrates, seeds |
-| Docker | same as above, after `docker compose up -d` (set `EMBEDDED_PG=off`) | Migrates and seeds your container |
-| Installed PostgreSQL (e.g. the PG 18 Windows service on :5433) | `postgresql://postgres:YOUR_PASSWORD@localhost:5433/crashtest` | Creates `crashtest` if missing (UTF-8), migrates, seeds |
-| Your own / hosted (Neon, Supabase, RDS…) | `postgresql://USER:PASS@HOST:5432/DB?sslmode=require` | Creates the database if missing and allowed, migrates, seeds; no embedded server |
-
-| Command | What it does |
-|---|---|
-| `npm run db:check` | Is the database integrated and working? Connection, encoding, migrations, tables, defaults, write/read, live-update channel, job queue, worker, API |
-| `npm run db:migrate` | Apply all migrations + seed defaults (safe to repeat) |
-| `npm run db:studio` | Browse the data at http://localhost:5555 |
-| `npm run db:new-migration -- <name>` | After editing `schema.prisma`: create and apply a migration |
-| `npm run db:seed` | Re-seed test library, fix modes and settings |
-
-Tests use a separate `<database>_test` database on the same server (created and migrated automatically), so `npm test` never touches app data. Set `TEST_DATABASE_URL` to override.
-
-## How it works
-
+**Architecture:**
 ```
 apps/web (Next.js 16, React 19, Tailwind 4, TanStack Query, Framer Motion, Recharts)
-   │  REST + Socket.IO                     ← the browser never sees a key or calls graph8
+   │  REST + Socket.IO                     ← browser never sees a key or calls graph8
 apps/server (Express 5, zod, Socket.IO)  ── LISTEN crash_events ──┐
    │  pg-boss jobs                                                 │ NOTIFY
 apps/worker (pg-boss: run.plan · test.execute · run.fixes · fix.apply · run.finalize · cleanup · gate watch · heartbeat)
    │
 packages/core  graph8 client (p-limit 4, retry + backoff, defensive normalizers) · tests · fixes · money · health · gate · report
-packages/ai    graph8 copilot + Postgres LlmCache · plan · explain · promiseCheck · personas · report   (every function has a code fallback)
+packages/ai    graph8 copilot + Postgres LlmCache · plan · explain · promiseCheck · personas · report (every function has a code fallback)
 packages/db    Prisma 6 · PostgreSQL 16 (runs, results, evidence, fixes, write-backs, gate events, health, reports, cache, heartbeat)
 ```
 
-**The loop:** Discover → Plan → Seed fake buyers → Trigger → Observe the outbox → Check (code decides) → Fix (Autopilot or Approve) → Re-test → Write back to graph8 → Clean up.
+## Platform Coverage
 
-- **Checks first, fixes second.** Autopilot fixes wait until every check has finished, so pausing a sequence for one problem can't hide another problem on the same sequence. The board goes red first, then the agent fixes and re-tests.
-- **Resumable.** Every step is saved before and after, fake buyers have deterministic emails (read before write), and a restarted worker re-queues interrupted work (E7).
-- **Honest numbers.** Leads count each contact once, and pipeline counts each open deal once, so "at risk" can never exceed your open pipeline.
-
-## Tests
-
-| ID | Test | Area | What fails it | Fix |
-|---|---|---|---|---|
-| T1 | Opt-out leak | Sell | An opted-out buyer gets any email | Pause the sequence, withdraw the buyer, create a task |
-| T2 | Double tap | Sell | One buyer gets more than N emails a day across two sequences | Withdraw from the lower-priority sequence, create a task |
-| T3 | Broken personalisation | Sell | `{{first_name}}`, `Hi ,`, `undefined`, `null` reach the inbox | Pause, and a task names the step and field |
-| T4 | Orphan lead | Hygiene | An active lead has no owner, or an owner who left | Re-own through a temporary list (preview count first; `assign-owner` is blocked) |
-| T7 | Content check | Sell | No unsubscribe line, template leftovers, or an unapproved promise (the AI must quote the exact sentence) | Pause, and a task quotes the sentence |
-| T13 | Quote check | Bill | Total ≠ deal (±1%), no line items, expired, departed sender, opted-out recipient | Task and deal note with both numbers. **Sent quotes are never edited.** |
-| T11 | Booking check | Book | A booking link routes to someone who left | Task to fix the host group (no paid bookings created) |
-| T8 · T9 | Speed-to-lead · Contact limit | Hygiene · Sell | Off by default (MVP+) | Task · withdraw from extra sequences |
-
-## graph8 platform coverage
-
-| graph8 area | What we use | R/W |
+| graph8 Area | How it's Used | Read/Write |
 |---|---|---|
-| Contacts + custom fields | Fake buyers tagged `crash_test_run`, owners, suppression status | R/W |
-| Lists | Tag lists, enrol lists, re-own via list (preview + patch) | R/W |
-| Engage: sequences | Steps, enrol, withdraw, pause, resume, step snapshots for the gate | R/W |
-| Suppressions | T1 set-up, fixes, undo | R/W |
-| Sandbox outbox | Every send observed | R |
-| Revenue: deals + notes | $ at risk, T13 amounts, deal notes | R/W |
-| Revenue: quotes | T13 totals, line items, expiry, sender, recipient | R only |
-| Scheduling | Booking links and hosts (T11) | R |
-| Work: tasks | Write-back of every failure and the Monday report | W |
-| Roles / org users · mailboxes | Current owners, senders, hosts | R |
-| Copilot | AI planning, plain-English copy, promise check, personas, report summary | R |
-| Usage | Credit check in `npm run gates` | R |
+| **Contacts & Fields** | Fake buyers tagged `crash_test_run`, owners, suppressions | R/W |
+| **Lists** | Tag lists, enrol lists, re-own via list | R/W |
+| **Engage Sequences** | Steps, enrol, withdraw, pause, resume, step snapshots | R/W |
+| **Suppressions** | Set-up, fixes, undo | R/W |
+| **Sandbox Outbox** | Every send observed | R |
+| **Revenue: Deals** | $ at risk, quote comparisons, deal notes | R/W |
+| **Revenue: Quotes** | Totals, line items, expiry, sender, recipient | R |
+| **Scheduling** | Booking links and hosts | R |
+| **Tasks** | Write-back of failures and summary reports | W |
+| **Users & Mailboxes**| Current owners, senders, hosts | R |
+| **Copilot** | AI planning, plain-English copy, promise check | R |
 
-`docs/ops.json` lists every operation in the contract, and `docs/endpoints*.md` document the shapes we use. `tests/contract.test.ts` fails if the code calls an operation that doesn't exist, or if the app could edit, void or resend a quote.
+## Checks & Tests
 
-## Safety
+| ID | Test | Area | Failure Condition | Resolution / Fix |
+|---|---|---|---|---|
+| **T1** | Opt-out leak | Sell | An opted-out buyer receives any email | Pauses sequence, withdraws buyer, creates task |
+| **T2** | Double tap | Sell | Buyer gets > N emails/day across sequences | Withdraws from lower-priority sequence |
+| **T3** | Broken personalization | Sell | `{{first_name}}`, `undefined`, `null` in email | Pauses sequence, creates task naming the field |
+| **T4** | Orphan lead | Hygiene | Active lead has no owner (or departed owner)| Re-assigns owner through temporary list |
+| **T7** | Content check | Sell | No unsubscribe line, unapproved promises | Pauses sequence, quotes the offending sentence |
+| **T13** | Quote check | Bill | Total ≠ deal, expired, missing line items | Creates task & deal note (never edits sent quotes) |
+| **T11** | Booking check | Book | Link routes to departed team member | Task to fix host group |
+| **T8/9**| Speed & Contact limits | Hygiene | Contact limit exceeded (Off by default MVP+) | Withdraws from extra sequences |
 
-- Keys live only in the server and worker env. The browser only calls our API.
-- A run refuses to start unless `/sandbox/status` says sandbox, and `GRAPH8_WORKSPACE_ID` matches if set.
-- Fake buyers only use `TEST_DOMAIN`, and code throws on any other address.
-- Fixes come from a fixed allow-list. Nothing emails real contacts, deletes real records or edits a sent quote.
-- Every applied fix stores its real before/after state from graph8 and can be undone.
-- Clean-up withdraws, un-suppresses and deletes every fake buyer, even when a run fails.
-- zod validates every request, CORS is locked to the web origin, and share links use random 32-byte tokens.
+## Getting Started
 
-## Five-minute demo
+### Prerequisites
+- Node.js `22.12` or higher
+- A graph8 `GRAPH8_API_KEY` (Sandbox environment)
 
-| Time | Beat |
+### Installation
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Configure environment:
+```bash
+cp .env.example .env
+```
+*(Add your `GRAPH8_API_KEY` to the `.env` file)*
+
+3. Start the application:
+```bash
+npm run dev
+```
+*(Starts embedded Postgres 16, API on :4000, worker, and web on :3000)*
+
+## Database Configuration
+
+The project uses PostgreSQL 16 and Prisma 6. **`DATABASE_URL` in `.env` is the only setting required.**
+
+| Setup | `DATABASE_URL` | Behavior |
+|---|---|---|
+| **Built-in (default)** | `postgresql://crash:crash@localhost:5432/crashtest` | Starts embedded PostgreSQL (data in `.pgdata/`), migrates, seeds |
+| **Docker** | same as above | Run `docker compose up -d` (set `EMBEDDED_PG=off`). Migrates and seeds container. |
+| **Installed PG** | `postgresql://postgres:PASS@localhost:5433/crashtest` | Creates DB if missing, migrates, seeds |
+| **Hosted (Neon/RDS)** | `postgresql://USER:PASS@HOST:5432/DB?sslmode=require` | Connects, migrates, seeds; no embedded server. |
+
+## Commands
+
+| Command | Description |
 |---|---|
-| 0:00 | "Your revenue machine sells, books and bills on its own. How do you know it works?" Workspace page: health rings, $ open pipeline, quotes. |
-| 0:30 | **Run all tests.** Fake buyers are created in graph8 and cards move live. |
-| 1:10 | Sell: *"Dana opted out but got 1 email from Q4 Outbound."* Open the real outbox email. Autopilot pauses and removes her, and the re-test passes. |
-| 1:50 | Bill: *"Quote Q-1042 says $12,000. The deal says $15,000."* Approve mode: preview → **Apply** → the note appears on the deal in graph8. |
-| 2:40 | Gate: edit a live step in graph8 to "we guarantee 50% off". The banner turns BLOCKED within seconds, the sentence is highlighted and the sequence is paused. |
-| 3:20 | Judge moment: a judge removes a suppression or enrols a contact twice. Re-run: it goes red → fixed → green. |
-| 4:00 | **Report → Save to graph8**: leads and $ protected. Show the task in graph8. |
-| 4:30 | One slide: architecture + the coverage table above. |
-| 4:50 | "graph8 logs what the machine did. Crash Test proves it does what you think." |
+| `npm run dev` | Start the full stack (web, server, worker, embedded DB) |
+| `npm run build` / `npm start` | Production build, then run it (see [Deployment](#deployment)) |
+| `npm run gates` | Run Go/No-go checklist against the real workspace (sandbox, outbox, etc.) |
+| `npm run seed:graph8` | Dry run demo data. Add `-- --apply` to create it in the sandbox. |
+| `npm run reset:demo` | Clean up fake buyers, undo fixes, restore planted problems |
+| `npm test` | Run strict acceptance tests on a real Postgres instance |
+| `npm run db:check` | Verify DB connection, migrations, and job queue health |
+| `npm run db:studio` | Browse the data via Prisma Studio (`localhost:5555`) |
+| `npm run typecheck` | Strict TypeScript type checking |
+| `npm run lint` | ESLint on the web application |
 
-Use **Settings → Demo preset** (Autopilot for pause and withdraw, Approve for deal notes and re-owning) and **/ready → Reset demo** between rehearsals.
+## Deployment
 
-**Never say:** "graph8 has no guardrails", "tests deliverability", "works on any CRM", "catches every bug", "fixes quotes" (we flag them), or any booking feature we didn't build.
+Crash Test ships as **one Docker image** (web app, API and worker) plus a **PostgreSQL** database.
+
+- **One public port:** only the web app listens publicly, on `$PORT` (default 3000). It forwards `/api` and `/socket.io` to the API, which listens on loopback inside the container. So you get one URL, no CORS, and live updates over websockets.
+- **Automatic migrations:** on every start, the database is migrated and the defaults are seeded (safe to repeat). Then the three services start. If one stops, the container exits so the platform restarts it.
+- **Health check:** `GET /api/health`.
+- **Resources:** give it at least **1 GB RAM**, since it runs three Node processes.
+
+### Settings (`.env.production.example` lists them all)
+
+| Variable | Required | What it does |
+|---|---|---|
+| `DATABASE_URL` | yes | PostgreSQL connection string (the database is created and migrated on start) |
+| `APP_PASSWORD` | yes | Password for the whole app, at least 12 characters (`openssl rand -base64 24`). The browser asks once (any user name). Shared report links (`/r/…`) and `/api/health` stay public. The app refuses to start without one unless `ALLOW_NO_PASSWORD=1` (private networks only). |
+| `GRAPH8_API_KEY` | yes | Runs need a developer-sandbox key (`g8_sbx_…`); a live key is read-only here |
+| `GRAPH8_BASE_URL` | with a sandbox key | The graph8 developer-sandbox API base URL |
+| `GRAPH8_WORKSPACE_ID` | recommended | Runs refuse any other workspace (the `org_id` from `GET /sandbox/status`) |
+| `GRAPH8_AI` | no | `on` (graph8 copilot, uses credits) or `off` (rules only) |
+| `PORT` | no | Public port (hosts like Render and Railway set it) |
+
+Keys stay on the server. Nothing secret is built into the browser bundle, and `.env*` files are kept out of the image.
+
+### Option A: any server with Docker (VPS, EC2, Hetzner…)
+```bash
+cp .env.production.example .env.production
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+This starts PostgreSQL 16 (data in a volume) and the app on port 3000. Set `POSTGRES_PASSWORD` and `APP_PASSWORD` in `.env.production` first.
+
+For HTTPS on your own domain, point DNS at the server, open ports 80 and 443, set `DOMAIN` and `APP_BIND=127.0.0.1` (so plain HTTP on port 3000 stays private), and add `--profile https`. Caddy then gets and renews the certificate:
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production --profile https up -d --build
+```
+
+### Option B: Render (one click)
+In the Render dashboard, choose **New → Blueprint** and pick this repo. `render.yaml` creates the web service (from the Dockerfile) and a PostgreSQL database, wires `DATABASE_URL`, and generates `APP_PASSWORD` (find it in the service's **Environment** tab). Enter `GRAPH8_API_KEY`, `GRAPH8_BASE_URL` and `GRAPH8_WORKSPACE_ID` when asked.
+
+### Option C: Railway, Fly.io or any container host
+Deploy the `Dockerfile`, attach a PostgreSQL database, and set the variables above. No other setup is needed.
+
+### Without Docker (a plain Node 22.12+ host)
+```bash
+npm ci
+npm run build   # Prisma client + production web build
+npm start       # migrate, then web on $PORT + API + worker
+```
+`npm start` reads `.env` when it exists; real environment variables take precedence. Like the image, it needs `APP_PASSWORD` (or `ALLOW_NO_PASSWORD=1` for a quick local check).
+
+## Safety & Security
+
+- **Environment Lock:** Keys live only in the server/worker. The browser only communicates with our internal API.
+- **Access:** Deployments need `APP_PASSWORD`. Every page, API call and live connection then needs it, except shared report links and the health check. Requests that change something (and the live connection) are refused when they come from another site, so a cached password can't be abused cross-site. Plain `npm run dev` stays open for local work.
+- **Sandbox Only:** Runs refuse to start unless the workspace status confirms it is a sandbox environment.
+- **Domain Restriction:** Fake buyers exclusively use the `TEST_DOMAIN`.
+- **Non-Destructive Fixes:** Fixes are strictly allow-listed. The system never emails real contacts, deletes real user records, or edits sent quotes.
+- **Audit Trails:** Every applied fix stores its real before/after state from graph8 and can be fully undone.
+- **Strict Clean-up:** The clean-up job withdraws, un-suppresses, and deletes every fake buyer, even if a run fails.
+
+---
+
+**Team:** Usman Hassan & Muhammad Sohaib  
+*Built for the graph8 Programmable Revenue Hackathon (Sep 2026)*

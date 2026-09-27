@@ -62,16 +62,22 @@ function Board({ id }: { id: string }) {
   const closeDrawer = useCallback(() => openResult(null), [openResult]);
 
   // "Apply fix" on a card applies what is waiting for approval, nothing else.
+  // Each card tracks its own in-flight apply, so starting another card doesn't re-enable this one.
+  const [applying, setApplying] = useState<Set<string>>(() => new Set());
   const apply = useMutation({
+    onMutate: (r: ResultDTO) => setApplying((s) => new Set(s).add(r.id)),
     mutationFn: async (r: ResultDTO) => {
       const d = await api<ResultDTO>(`/api/results/${r.id}`);
-      const todo = d.fixes?.filter((x) => x.status === "PROPOSED" && x.mode === "APPROVE") ?? [];
+      const todo = d.fixes?.filter((x) => x.status === "PROPOSED" && x.mode === "APPROVE" && !x.appliedAt) ?? [];
       for (const f of todo) await post(`/api/fixes/${f.id}/apply`);
       return { r, n: todo.length };
     },
     onSuccess: ({ r, n }) => toast({ tone: "info", message: n ? `Applying ${n === 1 ? "fix" : `${n} fixes`} for ${r.targetName}…` : `Nothing left to apply for ${r.targetName}` }),
     onError: (e: Error) => toast({ tone: "fail", message: e.message }),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["run", id] }),
+    onSettled: (_d, _e, r) => {
+      setApplying((s) => { const n = new Set(s); n.delete(r.id); return n; });
+      qc.invalidateQueries({ queryKey: ["run", id] });
+    },
   });
 
   const again = useMutation({
@@ -87,6 +93,8 @@ function Board({ id }: { id: string }) {
   const failed = (t?.fail ?? 0) + (t?.needsApproval ?? 0) + (t?.fixed ?? 0);
   const errors = t?.error ?? 0;
   const couldnt = `${errors} check${errors === 1 ? "" : "s"} couldn't run`;
+  // A finished run can still have a result being re-checked from the drawer.
+  const rechecking = !!d && !live && (t?.running ?? 0) + (t?.queued ?? 0) > 0;
   const seqHealth = [...(d?.health ?? [])].sort((a, b) => a.score - b.score);
   const gov = governing(detail.data?.fixes);
 
@@ -99,7 +107,7 @@ function Board({ id }: { id: string }) {
             {d?.trigger === "GATE" ? "Pre-flight gate run" : "Run"} · {id.slice(-8)} {d ? `· ${duration(d.startedAt, d.finishedAt)}` : ""} {d?.planSource ? `· plan: ${d.planSource === "rules" ? "rules" : "graph8 AI"}` : ""}
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight">
-            {!d ? "Loading…" : live ? (d.status === "PLANNING" || d.status === "QUEUED" ? "Discovering and planning…" : "Running tests…") : d.status === "FAILED" ? "Run stopped" : failed ? `${failed} problem${failed === 1 ? "" : "s"} found${errors ? ` · ${couldnt}` : ""}` : errors ? couldnt : "All checks passed"}
+            {!d ? "Loading…" : live ? (d.status === "PLANNING" || d.status === "QUEUED" ? "Discovering and planning…" : "Running tests…") : d.status === "FAILED" ? "Run stopped" : rechecking && !failed ? "Re-checking…" : failed ? `${failed} problem${failed === 1 ? "" : "s"} found${errors ? ` · ${couldnt}` : ""}` : errors ? couldnt : "All checks passed"}
           </h1>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -152,7 +160,7 @@ function Board({ id }: { id: string }) {
                     {!d && c.key === "running" && [0, 1, 2].map((i) => <Skeleton key={i} className="h-24" />)}
                     {items.map((r) => (
                       <div key={r.id} onMouseEnter={() => setSelected(r.id)} onFocus={() => setSelected(r.id)}>
-                        <ResultCard r={r} selected={focus?.id === r.id} onOpen={() => openResult(r.id)} onApply={() => apply.mutate(r)} applying={apply.isPending && apply.variables?.id === r.id} />
+                        <ResultCard r={r} selected={focus?.id === r.id} onOpen={() => openResult(r.id)} onApply={() => apply.mutate(r)} applying={applying.has(r.id)} />
                       </div>
                     ))}
                   </div>
@@ -165,7 +173,7 @@ function Board({ id }: { id: string }) {
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
           <Panel title={focus ? `Evidence · ${focus.testName}` : "Evidence"} right={focus && <button onClick={() => openResult(focus.id)} className="text-xs text-action hover:underline">Details</button>}>
             {!focus ? (
-              <p className="text-sm text-faint">{live ? "Evidence appears here as soon as a check fails." : d?.status === "FAILED" ? "The run stopped before any check failed." : "Nothing failed. Every check came back clean."}</p>
+              <p className="text-sm text-faint">{!d ? "Loading…" : live || rechecking ? "Evidence appears here as soon as a check fails." : d.status === "FAILED" ? "The run stopped before any check failed." : "Nothing failed. Every check came back clean."}</p>
             ) : (
               <div className="space-y-3">
                 <p className="text-[15px] leading-snug">{focus.status === "ERROR" ? `Couldn't check: ${focus.error ?? focus.actual ?? "unknown error"}` : focus.summary ?? focus.actual}</p>
@@ -183,7 +191,7 @@ function Board({ id }: { id: string }) {
           </Panel>
           <Panel title="Sequence health">
             {!seqHealth.length ? (
-              <p className="text-sm text-faint">{live ? "Scores appear when the run finishes." : "This run didn't score any sequence."}</p>
+              <p className="text-sm text-faint">{!d ? "Loading…" : live ? "Scores appear when the run finishes." : "This run didn't score any sequence."}</p>
             ) : (
               <ul className="space-y-3">
                 {seqHealth.map((s) => (

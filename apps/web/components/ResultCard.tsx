@@ -9,7 +9,7 @@ import { money, STATUS_STYLE } from "@/lib/format";
 export function ResultCard({ r, selected, onOpen, onApply, applying }: { r: ResultDTO; selected?: boolean; onOpen: () => void; onApply?: () => void; applying?: boolean }) {
   const s = STATUS_STYLE[r.status];
   const running = r.status === "RUNNING" || r.status === "QUEUED";
-  const pending = r.fixes?.filter((f) => f.status === "PROPOSED" && f.mode === "APPROVE") ?? [];
+  const pending = r.fixes?.filter((f) => f.status === "PROPOSED" && f.mode === "APPROVE" && !f.appliedAt) ?? [];
   const recorded = (r.writebacks?.length ?? 0) > 0 && (r.status === "FAIL" || r.status === "NEEDS_APPROVAL");
   const line =
     r.status === "RUNNING" && r.retestStatus === "RUNNING" ? "Re-testing…"

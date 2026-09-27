@@ -29,7 +29,7 @@ export function errors(err: unknown, req: Request, res: Response, _next: NextFun
   const e = err as { code?: string; message?: string; hint?: string; status?: number; type?: string; expose?: boolean };
 
   // body-parser / router errors are the client's fault: keep their 4xx, never call them a graph8 outage.
-  const known = e.type ? CLIENT_ERRORS[e.type] : undefined;
+  const known = e.type && Object.hasOwn(CLIENT_ERRORS, e.type) ? CLIENT_ERRORS[e.type] : undefined;
   if (known || (e.expose && e.status && e.status >= 400 && e.status < 500)) {
     log.warn({ path: req.path, type: e.type }, "bad request");
     const [status, code, message] = known ?? [e.status!, "BAD_REQUEST", e.message ?? "Bad request"];
@@ -37,7 +37,10 @@ export function errors(err: unknown, req: Request, res: Response, _next: NextFun
   }
   // Prisma: a missing row is a 404; anything else is ours, without internals.
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === "P2025") return send(404, "NOT_FOUND", "Not found");
+    if (err.code === "P2025") {
+      log.warn({ path: req.path, meta: err.meta }, "record not found");
+      return send(404, "NOT_FOUND", "Not found");
+    }
     log.error({ err, path: req.path }, "database request failed");
     return send(500, "INTERNAL", "Something went wrong");
   }
@@ -45,13 +48,16 @@ export function errors(err: unknown, req: Request, res: Response, _next: NextFun
     log.error({ err, path: req.path }, "database request failed");
     return send(500, "INTERNAL", "Something went wrong");
   }
+  // A malformed %-escape in a path (e.g. /api/runs/%E0%A4%A) is the client's fault.
+  if (err instanceof URIError) return send(400, "BAD_REQUEST", "Malformed URL");
   // Only a graph8 call failing is a bad gateway.
   if (err instanceof GraphError) {
     log.error({ err, path: req.path }, "graph8 request failed");
     return send(err.code === "NO_KEY" ? 503 : 502, err.code, err.message, err.hint);
   }
+  // Anything else is ours: log it in full, never echo internals (codes, SQL, paths) to the client.
   log.error({ err, path: req.path }, "request failed");
-  send(500, e.code ?? "INTERNAL", e.message ?? "Something went wrong", e.hint);
+  send(500, "INTERNAL", "Something went wrong. Check the server log.");
 }
 
 export function requestLog(req: Request, res: Response, next: NextFunction) {

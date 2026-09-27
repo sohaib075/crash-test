@@ -35,7 +35,7 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
 - [x] E8 Clean-up → 0 fake buyers, tag list deleted
 - [~] **Run E1–E8 live on the demo workspace** once the key is in (Sun 12:00–4:00)
 
-`npm test`: 56 tests (rules, contract, API, E1–E8, review and audit regressions).
+`npm test`: 65 tests (rules, contract, API, E1–E8, review and audit regressions).
 
 ## Verification pass (Sat 26 Sep, evening)
 - `npm run dev` from cold: Postgres + migrations + seed + API + worker + web from one command; heartbeat live.
@@ -80,6 +80,64 @@ Every page, route and engine path was tested: real key checks, a full-stack brow
   - Error states replace empty states.
   - Re-read, weight, gate and share-link errors show a toast. A share link that can't be copied is shown on the page.
   - T4 says "couldn't check" if graph8's team list can't be read.
+
+### Second verification round (Sun 27 Sep, ~3 PM)
+18 independent agents checked every fix against the code (4 slice verifiers, 1 regression hunter, and skeptics who tried to refute each new issue). 26 of the 32 groups were fully fixed; 6 were partial. All of those, plus the new issues that survived refutation, are now fixed and covered in `tests/audit.test.ts`:
+- **Finalize race** (found under CPU load):
+  - A queued finalize could land between "fix applied" and "re-test started", then score health early and delete buyers mid re-test.
+  - Fix: the fix phase and mid-run approvals now hold their results RUNNING until settled. Skip never releases someone else's hold.
+  - Apply on a busy result returns 409, and the drawer hides fix buttons while a check runs.
+- **Reset demo:**
+  - A run stopped while planning stays stopped.
+  - The fix phase stops mid-way on a reset.
+  - Undoing a withdraw of an already-deleted test buyer is a no-op, not an error.
+- **Re-run this test:**
+  - One re-check at a time (claimed in the route). Re-running a stopped run returns 409.
+  - A re-check that can't run keeps the result's verdict.
+  - A failing re-check on a FIXED result asks the test whether its fix still contains the problem. For T7, a paused sequence stays FIXED ("still contained").
+  - An undone or skipped fix can be proposed again when the problem comes back.
+- **Worker restart:** stale fix claims are released and interrupted work is resumed before any job handler starts. Results held by an interrupted fix phase are settled by the fix phase, not re-tested.
+- **Health:** a sequence's health is the latest observation of each test, from any run, so a gate run that only re-checks the copy can't erase an earlier opt-out leak. Each failing test counts once (T2 pairs). Health is re-scored after a re-check.
+- **Report:** a flagged quote with no linked deal counts once, not once per run. Readiness uses the quote tolerance from Settings.
+- **API:**
+  - A malformed URL returns 400.
+  - Unknown server errors return a generic 500 without internals.
+  - P2025 is logged.
+- **UI:**
+  - Template-aware highlighting in sequence evidence.
+  - Per-card Apply state, and claimed fixes aren't offered again.
+  - Loading and "Re-checking…" wording.
+  - Weight input restores the saved value after a failed save.
+  - Stale share link cleared.
+  - Sequence page refreshes on fewer events.
+- Refuted, so no change: report headline counts per result row (by design; top issues are per finding).
+
+## Sandbox key (Sun 27 Sep, ~3:40 PM)
+A `g8_sbx_` key was provided. graph8 rejects it on production (`be.graph8.com`: "Sandbox keys work only against the graph8 developer sandbox") and on QA (`be.qa.graph8.com`: "Invalid API key"). The public docs don't list the sandbox host.
+- It's stored, commented, in `.env` with switch instructions. The live key stays active so the app keeps working read-only.
+- **Needed:** the developer-sandbox base URL from the hackathon organisers. Then set `GRAPH8_BASE_URL`, activate the sandbox key, and set `GRAPH8_WORKSPACE_ID` to the `org_id` from `GET /sandbox/status`.
+
+## Deployment (Sun 27 Sep, ~4 PM)
+- One image (`Dockerfile`, Node 24, tini). `scripts/start.mjs` migrates and seeds, then runs the web app on `$PORT`, the API on 127.0.0.1:4000 and the worker. If one of them dies, the container exits.
+- One origin: `next.config.ts` rewrites `/api` and `/socket.io` to the API. The browser uses same-origin URLs and the socket polls first, then upgrades. `NEXT_PUBLIC_API_URL` is optional.
+- `APP_PASSWORD`:
+  - HTTP Basic auth in `apps/web/proxy.ts` and again in the API (Express and socket.io).
+  - Public: `/r/…` share pages (which now make no private calls), `/api/public/…`, `/api/health` and static files.
+- Configs:
+  - `docker-compose.prod.yml`: Postgres 16 plus the app, with optional Caddy HTTPS (`--profile https`).
+  - `render.yaml`: Render blueprint.
+  - `.env.production.example`.
+  - `.dockerignore` excludes every `.env*` at any depth.
+  - `README.md` has a new Deployment section.
+- Verified locally with the real production path (`npm run build` and `npm start`, no Docker on this machine):
+  - First boot on an empty database creates, migrates and seeds it; a restart is idempotent.
+  - Without the password: pages, APIs, socket, `/api/healthx` and an encoded `/%61pi/runs` all return 401. Health, share page, public report API and static files return 200.
+  - The API on :4000 also returns 401 without the password.
+  - Socket.io handshake works with and without the trailing slash, then upgrades to a websocket through the proxy. A wrong password is refused.
+  - In the browser, the app works behind the password and a share link makes only its public call.
+- Found and fixed while verifying:
+  - The socket.io trailing slash (the server now accepts both forms).
+  - An old `apps/web/.env.local` was baking `NEXT_PUBLIC_API_URL=http://localhost:4000` into production builds. It's removed, and `.dockerignore` now covers nested `.env*` files.
 
 ## Go-live checklist (needs GRAPH8_API_KEY)
 1. [ ] Put the key in `.env`, then `npm run dev`

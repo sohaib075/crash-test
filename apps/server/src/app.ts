@@ -10,11 +10,15 @@ import { PatchModesBody, PatchSettingsBody, PatchTestBody, StartRunBody, TEST_BY
 import cors from "cors";
 import express, { type Request } from "express";
 import { z } from "zod";
+import { requirePassword } from "./auth";
 import { body, errors, HttpError, requestLog } from "./middleware";
 
 export function createApp(queue: Queue) {
   const app = express();
+  app.set("trust proxy", "loopback"); // behind the web app's proxy in production
+  app.disable("x-powered-by");
   app.use(cors({ origin: process.env.WEB_ORIGIN ?? "http://localhost:3000" }));
+  app.use(requirePassword);
   app.use(express.json({ limit: "200kb" }));
   app.use(requestLog);
 
@@ -83,8 +87,9 @@ export function createApp(queue: Queue) {
     res.json(r);
   });
   app.post("/api/results/:id/retest", async (req, res) => {
-    const r = await prisma.testResult.findUnique({ where: { id: id(req) } });
+    const r = await prisma.testResult.findUnique({ where: { id: id(req) }, include: { run: true } });
     if (!r) throw notFound("Result");
+    if (r.run.status === "FAILED") throw new HttpError(409, "RUN_STOPPED", "This run was stopped, so its tests can't run again.", "Start a new run.");
     // Claim it: one re-check at a time. A claim older than 10 minutes on a finished run is stale (lost job).
     const stale = new Date(Date.now() - 10 * 60_000);
     const claim = await prisma.testResult.updateMany({
@@ -98,12 +103,20 @@ export function createApp(queue: Queue) {
       data: { retestStatus: "QUEUED" },
     });
     if (!claim.count) throw new HttpError(409, "RESULT_BUSY", "This test is already running");
-    await queue.send(JOBS.retest, { resultId: r.id }, { singletonKey: `retest-${r.id}` });
+    try {
+      await queue.send(JOBS.retest, { resultId: r.id }, { singletonKey: `retest-${r.id}` });
+    } catch (err) {
+      // Not queued: release the claim so the button doesn't stay "Running…".
+      await prisma.testResult.updateMany({ where: { id: r.id, retestStatus: "QUEUED" }, data: { retestStatus: r.retestStatus } });
+      throw err;
+    }
     res.status(202).json({ ok: true });
   });
   app.post("/api/fixes/:id/apply", async (req, res) => {
-    const f = await prisma.fix.findUnique({ where: { id: id(req) } });
+    const f = await prisma.fix.findUnique({ where: { id: id(req) }, include: { result: true } });
     if (!f) throw notFound("Fix");
+    // A check or re-test is running on this result: applying now would race it.
+    if (f.result.status === "RUNNING" || f.result.status === "QUEUED") throw new HttpError(409, "RESULT_BUSY", "Wait for the check to finish, then apply.");
     if (f.status === "FAILED") await prisma.fix.update({ where: { id: f.id }, data: { status: "PROPOSED", appliedAt: null, error: null } });
     else if (f.status !== "PROPOSED" || f.appliedAt) throw new HttpError(409, "FIX_NOT_PROPOSED", `Fix is ${f.appliedAt && f.status === "PROPOSED" ? "being applied" : f.status.toLowerCase()}`);
     await queue.send(JOBS.fix, { fixId: f.id }, { singletonKey: `apply-${f.id}` });

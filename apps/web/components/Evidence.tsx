@@ -4,10 +4,10 @@ import type { EvidenceDTO } from "@crash/shared";
 import { CalendarClock, FileText, Mail, UserRound } from "lucide-react";
 import { highlightParts, money } from "@/lib/format";
 
-function Marked({ text, needle }: { text: string; needle?: string | null }) {
+function Marked({ text, needle, mode }: { text: string; needle?: string | null; mode?: "rendered" | "template" }) {
   return (
     <>
-      {highlightParts(text, needle).map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}
+      {highlightParts(text, needle, mode).map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}
     </>
   );
 }
@@ -45,7 +45,8 @@ export function SequenceEvidence({ e, compact }: { e: EvidenceDTO; compact?: boo
       <div className="px-3.5 py-3">
         <p className="text-sm text-fail">{f.issue}</p>
         <p className={`mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-muted ${compact ? "line-clamp-5" : ""}`}>
-          <Marked text={e.excerpt ?? ""} needle={e.highlight} />
+          {/* A step is a template: {{first_name|there}} is how merge fields are written, not a leftover. */}
+          <Marked text={e.excerpt ?? ""} needle={e.highlight} mode="template" />
         </p>
       </div>
     </article>

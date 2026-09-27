@@ -2,6 +2,7 @@
 
 import { FIX_LABEL, type FixAction, type FixMode, type Settings } from "@crash/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { useToast } from "@/app/providers";
 import { Button, ErrorBox, Panel, Skeleton } from "@/components/ui";
 import { api, patch } from "@/lib/api";
@@ -32,10 +33,11 @@ export default function SettingsPage() {
     onSuccess: (d) => qc.setQueryData(["modes"], d),
     onError: (e: Error) => toast({ tone: "fail", message: e.message }),
   });
+  const [weightRev, setWeightRev] = useState(0);
   const setTest = useMutation({
     mutationFn: ({ id, ...b }: { id: string; enabled?: boolean; weight?: number }) => patch(`/api/tests/${id}`, b),
     onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["tests"] }); if (v.weight !== undefined) toast({ tone: "pass", message: `${v.id} weight saved` }); },
-    onError: (e: Error) => { toast({ tone: "fail", message: e.message }); qc.invalidateQueries({ queryKey: ["tests"] }); },
+    onError: (e: Error) => { toast({ tone: "fail", message: e.message }); setWeightRev((n) => n + 1); qc.invalidateQueries({ queryKey: ["tests"] }); },
   });
   const setSettings = useMutation({
     mutationFn: (b: Partial<Settings>) => patch<Settings>("/api/settings", b),
@@ -128,7 +130,7 @@ export default function SettingsPage() {
                   <label className="flex items-center gap-1 text-xs text-faint">
                     weight
                     <input
-                      key={`${t.id}-${t.weight}`}
+                      key={`${t.id}-${t.weight}-${weightRev}`}
                       type="number" min={0} max={100} step={1} defaultValue={t.weight}
                       onBlur={(e) => {
                         const raw = e.target.value.trim();

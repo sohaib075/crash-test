@@ -125,7 +125,11 @@ export async function undoFix(fixId: string): Promise<Fix> {
       break;
     case "WITHDRAW_CONTACT": {
       const buyer = await prisma.fakeBuyer.findUnique({ where: { contactId: a.contactId! } });
-      if (buyer?.cleanedUp) throw new Error("That fake buyer was already cleaned up; nothing to restore.");
+      if (buyer?.cleanedUp) {
+        // The test buyer was deleted by clean-up: there is nobody to re-enrol.
+        note = "The test buyer was already deleted by clean-up, so there was nothing to restore.";
+        break;
+      }
       const removed = ((before?.sequences as string[]) ?? []).filter((s) => !((after?.sequences as string[]) ?? []).includes(s));
       for (const s of removed) {
         // graph8 enrols through a list: the run's tag list for fake buyers,

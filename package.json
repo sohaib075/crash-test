@@ -12,6 +12,8 @@
     "dev:server": "npm run dev -w @crash/server",
     "dev:worker": "npm run dev -w @crash/worker",
     "dev:web": "npm run dev -w @crash/web",
+    "build": "npm run generate -w @crash/db && npm run build -w @crash/web",
+    "start": "node --env-file-if-exists=.env scripts/start.mjs",
     "typecheck": "tsc -p . && turbo run typecheck",
     "lint": "npm run lint -w @crash/web",
     "test": "vitest run",
@@ -30,5 +32,8 @@
     "typescript": "^5",
     "vitest": "^5.0.2"
   },
-  "packageManager": "npm@11.17.0"
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=22.12"
+  }
 }

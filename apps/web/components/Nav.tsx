@@ -20,8 +20,10 @@ const LINKS = [
 export function Nav() {
   const path = usePathname();
   const { connected } = useLive();
-  const ready = useQuery({ queryKey: ["ready-lite"], queryFn: () => api<ReadyDTO>("/api/ready?lite=1"), refetchInterval: 30_000, staleTime: 30_000 });
-  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace") });
+  // Shared reports are public: they must not call the private API (it may need a password).
+  const shared = path.startsWith("/r/");
+  const ready = useQuery({ queryKey: ["ready-lite"], queryFn: () => api<ReadyDTO>("/api/ready?lite=1"), refetchInterval: 30_000, staleTime: 30_000, enabled: !shared });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace"), enabled: !shared });
   const active = (href: string) => (href === "/" ? path === "/" || path.startsWith("/sequences") : path.startsWith(href));
   // Shared read-only reports show the brand only, no app navigation.
   if (path.startsWith("/r/")) {
@@ -74,7 +76,7 @@ export function Nav() {
 /** Red banner across every page while the gate is blocking a change (§14). */
 export function GateBanner() {
   const path = usePathname();
-  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace") });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace"), enabled: !path.startsWith("/r/") });
   const blocked = ws.data?.gate.blocked ?? [];
   return (
     <AnimatePresence>

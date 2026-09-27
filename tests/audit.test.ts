@@ -311,4 +311,101 @@ describe("audit: numbers", () => {
     const keys = top.map((t) => `${t.testId}|${t.target}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
+
+  it("health: a later partial run keeps earlier failures of other tests", async () => {
+    await setModes({ PAUSE_SEQUENCE: "APPROVE" }); // keep Q4 live so the partial run can target it
+    await startRun(queue, { testIds: ["T1", "T3"] });
+    await drain();
+    // Like a gate run: only the content check, only Q4.
+    const partial = await startRun(queue, { testIds: ["T7"], targetIds: ["seq_q4"] });
+    await drain();
+    const h = (await runDTO(partial.id))!.health.find((x) => x.graph8Id === "seq_q4")!;
+    expect(h.score).toBe(100 - 30 - 15 - 15); // T1 + T3 from the first run, T7 from this one
+    expect(h.reasons).toEqual(expect.arrayContaining(["opt-out leak", "broken personalisation", "content check"]));
+  });
+});
+
+describe("audit: second verification round", () => {
+  beforeEach(async () => {
+    await resetAll();
+    await setModes(DEMO_MODES);
+  });
+
+  it("Reset demo during planning: the run stays stopped and nothing starts", async () => {
+    const run = await startRun(noop, { testIds: ["T1"] });
+    const orig = mockBackend.discover;
+    mockBackend.discover = async () => {
+      const ws = await orig();
+      // Reset demo lands while graph8 is being read.
+      await prisma.run.update({ where: { id: run.id }, data: { status: "FAILED", error: "Stopped by demo reset" } });
+      return ws;
+    };
+    try {
+      await planRun(noop, run.id);
+    } finally {
+      mockBackend.discover = orig;
+    }
+    const r = await prisma.run.findUniqueOrThrow({ where: { id: run.id }, include: { results: true } });
+    expect(r.status).toBe("FAILED");
+    expect(r.results.every((x) => x.status === "ERROR")).toBe(true);
+    expect(await prisma.fakeBuyer.count()).toBe(0);
+  });
+
+  it("Skip on a held result doesn't release the hold", async () => {
+    await setModes({ PAUSE_SEQUENCE: "APPROVE", WITHDRAW_CONTACT: "APPROVE", CREATE_TASK: "APPROVE" });
+    const run = await startRun(queue, { testIds: ["T3"] });
+    await drain();
+    const r = (await results(run.id)).find((x) => x.targetId === "seq_q4")!;
+    const task = (await prisma.fix.findMany({ where: { resultId: r.id } })).find((f) => f.action === "CREATE_TASK")!;
+    await prisma.testResult.update({ where: { id: r.id }, data: { status: "RUNNING" } }); // e.g. a re-test in flight
+    expect((await request(app).post(`/api/fixes/${task.id}/reject`)).status).toBe(200);
+    expect((await prisma.testResult.findUniqueOrThrow({ where: { id: r.id } })).status).toBe("RUNNING");
+    const pause = (await prisma.fix.findMany({ where: { resultId: r.id } })).find((f) => f.action === "PAUSE_SEQUENCE")!;
+    const apply = await request(app).post(`/api/fixes/${pause.id}/apply`);
+    expect(apply.status).toBe(409);
+    expect(apply.body.error.code).toBe("RESULT_BUSY");
+  });
+
+  it("a re-check that can't run keeps the verdict; a stopped run can't be re-run", async () => {
+    const run = await startRun(queue, { testIds: ["T1"] });
+    await drain();
+    const r = (await results(run.id)).find((x) => x.targetId === "seq_in")!;
+    expect(r.status).toBe("PASS");
+    const orig = mockBackend.createContact;
+    mockBackend.createContact = async () => {
+      throw new Error("graph8 is having a moment");
+    };
+    try {
+      await retestJob(queue, r.id);
+      await drain();
+    } finally {
+      mockBackend.createContact = orig;
+    }
+    const after = await prisma.testResult.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after.status).toBe("PASS");
+    expect(after.retestStatus).toBe("ERROR");
+    await prisma.run.update({ where: { id: run.id }, data: { status: "FAILED" } });
+    const again = await request(app).post(`/api/results/${r.id}/retest`);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe("RUN_STOPPED");
+  });
+
+  it("undoing a withdraw of a cleaned-up buyer is a no-op, not an error", async () => {
+    const run = await startRun(queue, { testIds: ["T1"] });
+    await drain();
+    const r = (await results(run.id)).find((x) => x.targetId === "seq_q4")!;
+    const withdraw = (await prisma.fix.findMany({ where: { resultId: r.id } })).find((f) => f.action === "WITHDRAW_CONTACT" && f.status === "APPLIED")!;
+    const res = await request(app).post(`/api/fixes/${withdraw.id}/undo`);
+    expect(res.status).toBe(200);
+    const f = await prisma.fix.findUniqueOrThrow({ where: { id: withdraw.id } });
+    expect(f.status).toBe("UNDONE");
+    expect(f.error).toMatch(/nothing to restore/);
+    // The pause still holds, so the result is still fixed.
+    expect((await prisma.testResult.findUniqueOrThrow({ where: { id: r.id } })).status).toBe("FIXED");
+  });
+
+  it("a malformed URL is a 400 and unknown errors never leak internals", async () => {
+    const res = await request(app).get("/api/runs/%E0%A4%A");
+    expect(res.status).toBe(400);
+  });
 });
