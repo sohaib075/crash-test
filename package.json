@@ -15,12 +15,13 @@
     "typecheck": "tsc -p . && turbo run typecheck",
     "lint": "npm run lint -w @crash/web",
     "test": "vitest run",
-    "gates": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/gates.ts",
-    "seed:graph8": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-graph8.ts",
-    "reset:demo": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/reset-demo.ts",
+    "gates": "tsx --env-file-if-exists=.env scripts/gates.ts",
+    "seed:graph8": "tsx --env-file-if-exists=.env scripts/seed-graph8.ts",
+    "reset:demo": "tsx --env-file-if-exists=.env scripts/reset-demo.ts",
     "db:studio": "npm run studio -w @crash/db",
     "db:new-migration": "npm run migrate:new -w @crash/db --",
-    "db:seed": "npm run seed -w @crash/db"
+    "db:seed": "npm run seed -w @crash/db",
+    "db:check": "tsx --env-file-if-exists=.env scripts/db-check.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",

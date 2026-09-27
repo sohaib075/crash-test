@@ -1,6 +1,6 @@
 "use client";
 
-import type { WorkspaceDTO } from "@crash/shared";
+import type { Settings, WorkspaceDTO } from "@crash/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, FileText, Play, RefreshCw, Send, Users } from "lucide-react";
 import Link from "next/link";
@@ -23,10 +23,17 @@ export default function WorkspacePage() {
       else toast({ tone: "fail", message: e.message });
     },
   });
-  const rediscover = useMutation({ mutationFn: () => post<WorkspaceDTO>("/api/workspace/discover"), onSuccess: (d) => qc.setQueryData(["workspace"], d) });
+  const rediscover = useMutation({
+    mutationFn: () => post<WorkspaceDTO>("/api/workspace/discover"),
+    onSuccess: (d) => { qc.setQueryData(["workspace"], d); toast({ tone: "pass", message: "Re-read graph8" }); },
+    onError: (e: Error) => toast({ tone: "fail", message: `Couldn't read graph8: ${e.message}` }),
+  });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/api/settings") });
 
   const w = ws.data;
-  const mismatched = w?.quotes.filter((q) => q.total != null && q.dealAmount != null && Math.abs(q.total - q.dealAmount) / (q.dealAmount || 1) > 0.01) ?? [];
+  // Same rule as the quote check (T13): off by more than the tolerance in Settings.
+  const tol = settings.data?.quoteTolerancePct ?? 1;
+  const mismatched = w?.quotes.filter((q) => q.total != null && q.dealAmount != null && q.dealAmount > 0 && (Math.abs(q.total - q.dealAmount) / q.dealAmount) * 100 > tol) ?? [];
 
   return (
     <div className="space-y-6">

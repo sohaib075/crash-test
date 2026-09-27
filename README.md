@@ -34,14 +34,18 @@ PostgreSQL 16 + Prisma 6 (`packages/db`). pg-boss keeps its job queue in the sam
 |---|---|---|
 | Built-in (default) | `postgresql://crash:crash@localhost:5432/crashtest` | Starts an embedded PostgreSQL 16 (data in `.pgdata/`), migrates, seeds |
 | Docker | same as above, after `docker compose up -d` (set `EMBEDDED_PG=off`) | Migrates and seeds your container |
-| Your own / hosted (Neon, Supabase, RDS…) | `postgresql://USER:PASS@HOST:5432/DB?sslmode=require` | Migrates and seeds it; no embedded server |
+| Installed PostgreSQL (e.g. the PG 18 Windows service on :5433) | `postgresql://postgres:YOUR_PASSWORD@localhost:5433/crashtest` | Creates `crashtest` if missing (UTF-8), migrates, seeds |
+| Your own / hosted (Neon, Supabase, RDS…) | `postgresql://USER:PASS@HOST:5432/DB?sslmode=require` | Creates the database if missing and allowed, migrates, seeds; no embedded server |
 
 | Command | What it does |
 |---|---|
+| `npm run db:check` | Is the database integrated and working? Connection, encoding, migrations, tables, defaults, write/read, live-update channel, job queue, worker, API |
 | `npm run db:migrate` | Apply all migrations + seed defaults (safe to repeat) |
 | `npm run db:studio` | Browse the data at http://localhost:5555 |
 | `npm run db:new-migration -- <name>` | After editing `schema.prisma`: create and apply a migration |
 | `npm run db:seed` | Re-seed test library, fix modes and settings |
+
+Tests use a separate `<database>_test` database on the same server (created and migrated automatically), so `npm test` never touches app data. Set `TEST_DATABASE_URL` to override.
 
 ## How it works
 

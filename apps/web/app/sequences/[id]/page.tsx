@@ -7,7 +7,7 @@ import { use } from "react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ErrorBox, HealthRing, Panel, Skeleton, StatusPill } from "@/components/ui";
 import { api } from "@/lib/api";
-import { ago, highlightParts } from "@/lib/format";
+import { ago, delay, highlightParts } from "@/lib/format";
 
 type Detail = SequenceDTO & {
   history: { id: string; runId: string; testId: string; testName: string; status: TestStatus; summary: string | null; at: string }[];
@@ -38,10 +38,10 @@ export default function SequencePage({ params }: { params: Promise<{ id: string 
             {s.steps.map((st) => (
               <li key={st.id || st.order} className="rounded-xl border border-line bg-lab/60 p-4">
                 <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="font-mono">Step {st.order}</span> · {st.type} · {st.delayMinutes ? `after ${Math.round(st.delayMinutes / 60)}h` : "immediately"}
+                  <span className="font-mono">Step {st.order}</span> · {st.type} · {delay(st.delayMinutes)}
                 </div>
-                {st.subject && <div className="mt-1 font-medium">{highlightParts(st.subject).map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}</div>}
-                {st.body && <p className="mt-1 text-sm whitespace-pre-wrap text-muted">{highlightParts(st.body).map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}</p>}
+                {st.subject && <div className="mt-1 font-medium">{highlightParts(st.subject, null, "template").map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}</div>}
+                {st.body && <p className="mt-1 text-sm whitespace-pre-wrap text-muted">{highlightParts(st.body, null, "template").map((p, i) => (p.hit ? <mark key={i} className="hit">{p.t}</mark> : <span key={i}>{p.t}</span>))}</p>}
               </li>
             ))}
           </ol>

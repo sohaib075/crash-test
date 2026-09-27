@@ -6,7 +6,7 @@ import { HealthRing, Panel, StatTile, StatusPill } from "./ui";
 import { money } from "@/lib/format";
 
 export function ReportCard({ r }: { r: ReportDTO }) {
-  const chart = r.data.byArea.map((a) => ({ area: a.area[0] + a.area.slice(1).toLowerCase(), Failures: a.failures, Fixed: a.fixed, Passed: Math.max(0, a.tests - a.failures) }));
+  const chart = r.data.byArea.map((a) => ({ area: a.area[0] + a.area.slice(1).toLowerCase(), Failures: a.failures, Fixed: a.fixed, Passed: a.passed ?? Math.max(0, a.tests - a.failures - (a.errors ?? 0)) }));
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-line bg-panel px-6 py-5">

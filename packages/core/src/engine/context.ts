@@ -82,9 +82,10 @@ export async function tagList(runId: string): Promise<string> {
   return id;
 }
 
-export function makeCtx(runId: string, ws: Workspace, settings: Settings, attempt = 0): Ctx {
+export function makeCtx(runId: string, ws: Workspace, settings: Settings, attempt = 0, trigger: Ctx["trigger"] = "MANUAL"): Ctx {
   return {
     runId,
+    trigger,
     ws,
     settings,
     backend,
@@ -95,6 +96,8 @@ export function makeCtx(runId: string, ws: Workspace, settings: Settings, attemp
     async buyer(testId: TestId, key: string, opts = {}) {
       const email = buyerEmail(runId, testId, `${key}#${attempt}`);
       assertTestEmail(email);
+      const run = await prisma.run.findUnique({ where: { id: runId } });
+      if (run?.status === "FAILED") throw new Error("Run was stopped; not creating more test buyers.");
       const existing = await prisma.fakeBuyer.findUnique({ where: { email } });
       const persona = existing?.persona as { firstName: string; lastName: string } | undefined;
       if (existing) return { contactId: existing.contactId, email, name: persona?.firstName || email };

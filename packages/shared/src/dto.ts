@@ -83,6 +83,8 @@ export type RunDTO = {
   logs: { message: string; at: string }[];
   buyers: number;
   cleanedUp: boolean;
+  /** Health scores this run produced (one per sequence it touched). */
+  health: { sequenceId: string; graph8Id: string; name: string; score: number; band: HealthBand; reasons: string[] }[];
 };
 
 export type SequenceStepDTO = { id: string; order: number; type: string; delayMinutes: number; subject?: string; body?: string };
@@ -146,7 +148,7 @@ export type ReportDTO = {
   shareToken: string | null;
   createdAt: string;
   data: {
-    byArea: { area: Area; tests: number; failures: number; fixed: number }[];
+    byArea: { area: Area; tests: number; failures: number; fixed: number; passed?: number; errors?: number }[];
     topIssues: { testId: TestId; testName: string; target: string; summary: string; status: TestStatus; pipelineAtRisk: number }[];
     health: { name: string; score: number; band: HealthBand }[];
   };

@@ -40,6 +40,9 @@ async function main() {
   await boss.work(JOBS.retest, { pollingIntervalSeconds: 0.5 }, safe(JOBS.retest, (d) => retestJob(q, d.resultId)));
   await boss.work(JOBS.cleanup, { pollingIntervalSeconds: 1 }, safe(JOBS.cleanup, (d) => cleanupRun(d.runId)));
 
+  // Resume: a fix claimed (appliedAt) but never applied by a killed worker can be applied again.
+  const claims = await prisma.fix.updateMany({ where: { status: "PROPOSED", appliedAt: { not: null } }, data: { appliedAt: null } });
+  if (claims.count) log.info({ fixes: claims.count }, "Released interrupted fix claims");
   // Resume: tests stuck RUNNING from a killed worker go back on the queue (E7).
   const stuck = await prisma.testResult.findMany({ where: { status: { in: ["QUEUED", "RUNNING"] }, run: { status: "RUNNING" } } });
   for (const r of stuck) {

@@ -47,6 +47,7 @@ export async function runDTO(runId: string): Promise<RunDTO | null> {
       results: { include: { fixes: true, writebacks: true }, orderBy: { createdAt: "asc" } },
       logs: { orderBy: { at: "asc" }, take: 300 },
       _count: { select: { buyers: true } },
+      health: { include: { sequence: true }, orderBy: { score: "asc" } },
     },
   });
   if (!run) return null;
@@ -55,6 +56,7 @@ export async function runDTO(runId: string): Promise<RunDTO | null> {
     finishedAt: run.finishedAt?.toISOString() ?? null, planSource: (run.plan as { source?: string } | null)?.source ?? null,
     totals: totals(run.results, run), results: run.results.map(resultDTO),
     logs: run.logs.map((l) => ({ message: l.message, at: l.at.toISOString() })), buyers: run._count.buyers, cleanedUp: run.cleanedUp,
+    health: run.health.map((h) => ({ sequenceId: h.sequenceId, graph8Id: h.sequence.graph8Id, name: h.sequence.name, score: h.score, band: h.band, reasons: h.reasons })),
   };
 }
 

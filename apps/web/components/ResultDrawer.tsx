@@ -30,7 +30,7 @@ function FixRow({ f, onDone }: { f: FixDTO; onDone: () => void }) {
   const toast = useToast();
   const [confirm, setConfirm] = useState(false);
   const apply = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/apply`), onSuccess: () => { toast({ tone: "info", message: `Applying: ${FIX_VERB[f.action]}` }); onDone(); }, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
-  const reject = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/reject`), onSuccess: onDone });
+  const reject = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/reject`), onSuccess: onDone, onError: (e: Error) => { toast({ tone: "fail", message: e.message }); onDone(); } });
   const undo = useMutation({ mutationFn: () => post(`/api/fixes/${f.id}/undo`), onSuccess: () => { toast({ tone: "info", message: `Undone: ${FIX_VERB[f.action]}` }); setConfirm(false); onDone(); }, onError: (e: Error) => toast({ tone: "fail", message: e.message }) });
   const statusText = { PROPOSED: "Waiting for approval", APPLIED: "Applied", REJECTED: f.mode === "OFF" ? "Off: report only" : "Skipped", UNDONE: "Undone", FAILED: "Failed" }[f.status];
   const tone = { PROPOSED: "text-action", APPLIED: "text-pass", REJECTED: "text-faint", UNDONE: "text-muted", FAILED: "text-fail" }[f.status];
@@ -79,7 +79,14 @@ export function ResultDrawer({ resultId, onClose }: { resultId: string | null; o
   const toast = useToast();
   const panel = useRef<HTMLDivElement>(null);
   const q = useQuery({ queryKey: ["result", resultId], queryFn: () => api<ResultDTO>(`/api/results/${resultId}`), enabled: !!resultId });
-  const retest = useMutation({ mutationFn: () => post(`/api/results/${resultId}/retest`), onSuccess: () => toast({ tone: "info", message: "Re-testing…" }) });
+  const retest = useMutation({
+    mutationFn: () => post(`/api/results/${resultId}/retest`),
+    onSuccess: () => { toast({ tone: "info", message: "Re-testing…" }); refresh(); },
+    onError: (e: Error) => toast({ tone: "fail", message: e.message }),
+  });
+  // Keep the latest onClose without re-running the focus effect (which would steal focus on every re-render).
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; }, [onClose]);
 
   // Focus trap + Escape (§15 accessibility).
   useEffect(() => {
@@ -87,23 +94,26 @@ export function ResultDrawer({ resultId, onClose }: { resultId: string | null; o
     const prev = document.activeElement as HTMLElement | null;
     panel.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close.current();
       if (e.key !== "Tab" || !panel.current) return;
       const f = panel.current.querySelectorAll<HTMLElement>('button, a[href], [tabindex]:not([tabindex="-1"])');
       if (!f.length) return;
       const first = f[0], last = f[f.length - 1];
+      // Focus can fall out of the panel when the focused button unmounts (e.g. after "Yes, undo").
+      if (!panel.current.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); prev?.focus(); };
-  }, [resultId, onClose]);
+  }, [resultId]);
 
   const r = q.data;
-  const refresh = () => {
+  function refresh() {
     qc.invalidateQueries({ queryKey: ["result", resultId] });
     if (r) qc.invalidateQueries({ queryKey: ["run", r.runId] });
-  };
+  }
+  const busy = r?.status === "RUNNING" || r?.status === "QUEUED" || r?.retestStatus === "QUEUED";
 
   // No exit animation: an overlay that waits on an animation frame to leave can
   // stay invisible on top of the board (paused rAF) and swallow every click.
@@ -181,7 +191,7 @@ export function ResultDrawer({ resultId, onClose }: { resultId: string | null; o
                   )}
 
                   <div className="flex gap-2 border-t border-line pt-4">
-                    <Button size="sm" variant="outline" loading={retest.isPending} onClick={() => retest.mutate()}>Re-run this test</Button>
+                    <Button size="sm" variant="outline" loading={retest.isPending} disabled={busy} onClick={() => retest.mutate()}>{busy ? "Running…" : "Re-run this test"}</Button>
                   </div>
                 </>
               )}

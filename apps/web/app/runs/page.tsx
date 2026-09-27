@@ -18,6 +18,8 @@ export default function RunsPage() {
       <Panel pad={false}>
         {q.isLoading ? (
           <div className="space-y-2 p-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
+        ) : q.error && !q.data ? (
+          <p className="p-6 text-sm text-muted">Runs couldn&apos;t be loaded.</p>
         ) : !q.data?.length ? (
           <p className="p-6 text-sm text-muted">No runs yet. Press &quot;Run all tests&quot; on the Workspace page.</p>
         ) : (

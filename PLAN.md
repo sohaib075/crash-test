@@ -35,7 +35,7 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
 - [x] E8 Clean-up → 0 fake buyers, tag list deleted
 - [~] **Run E1–E8 live on the demo workspace** once the key is in (Sun 12:00–4:00)
 
-`npm test`: 41 tests (rules, contract, API, E1–E8, review regressions).
+`npm test`: 56 tests (rules, contract, API, E1–E8, review and audit regressions).
 
 ## Verification pass (Sat 26 Sep, evening)
 - `npm run dev` from cold: Postgres + migrations + seed + API + worker + web from one command; heartbeat live.
@@ -50,6 +50,36 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
   - phone-width overflow
   - stale error after a re-test
 - Still unverified until the key arrives: real graph8 payload shapes (outbox, quote detail, org users, event types). `npm run gates` prints them.
+
+## Full-website audit (Sun 27 Sep, afternoon)
+Every page, route and engine path was tested: real key checks, a full-stack browser pass on the QA harness, and a multi-agent audit with adversarial verification. The audit confirmed 43 findings (32 distinct fixes); 3 more were rejected. All 32 are fixed, and `tests/audit.test.ts` covers them:
+- **API errors:** bad JSON → 400, an oversized body → 413; only graph8 failures are 502/503; a missing row → 404; Prisma internals are never leaked. `limit`, test ids and report ids are validated.
+- **Fix lifecycle:**
+  - Skip only works on a live proposal (409 otherwise). Undo only works on an applied fix (409).
+  - Re-run returns 409 while the test is still running.
+  - Autopilot claims each fix before applying it.
+- **Re-run this test** now checks again from scratch. A new failure gets its fix proposals; a pass retires proposals that are no longer needed; a fixed result stays fixed.
+- **Undo of the fix that made a result FIXED** puts the result back to failing ("→ fix undone").
+- **Reset demo during a run:**
+  - It stops the run first; its open tests show "Stopped by demo reset".
+  - A stopped run starts no tests and creates no buyers.
+- **Clean-up** retires proposals that act on a deleted test buyer. Tasks keep their text but drop the contact link.
+- **Gate:**
+  - Undoing the gate's pause, or a later clean edit, releases the block, so the banner clears.
+  - A check that couldn't run says so; it never says "passed".
+  - Added or removed steps count as changes.
+- **Numbers:**
+  - Health uses the weights from Settings.
+  - The report uses the latest score per sequence and ranks top issues by pipeline, one row per finding.
+  - The chart counts passes and "couldn't check" results separately.
+  - The run board shows this run's scores and counts checks that couldn't run.
+- **UI:**
+  - Card Apply only applies approvals and shows its pending state and errors.
+  - The drawer no longer steals focus on re-render.
+  - Mode chip, quote tolerance, template-aware highlighting, and step delays in days, hours and minutes.
+  - Error states replace empty states.
+  - Re-read, weight, gate and share-link errors show a toast. A share link that can't be copied is shown on the page.
+  - T4 says "couldn't check" if graph8's team list can't be read.
 
 ## Go-live checklist (needs GRAPH8_API_KEY)
 1. [ ] Put the key in `.env`, then `npm run dev`
@@ -71,3 +101,11 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
 | Copilot slow, down or costly | Postgres cache + code fallback for every AI function; `GRAPH8_AI=off` |
 | Rate limits / 5xx | p-limit(4), retry with backoff + jitter, a clear ERROR card with a hint |
 | Worker crash mid-run | Resume on start; idempotent steps (E7) |
+
+## Live key test (Sun 27 Sep, morning): org "Hackathon Usman Hassan", live key, 139 scopes
+- 18/18 real graph8 writes pass through Crash Test's own backend: list, fake contact, custom-field tag, read-before-write lookup, add to list, suppress → reinstate, task create/delete, re-own preview + apply via a temporary list, clear owner via a list, clean-up lookup, withdraw, delete contact/list. No contact left behind.
+- Fixed from live data:
+  - contacts' `owner_id` is the **team-member id** (`/team-members`), not the org user id. It's now mapped via `propelauth_user_id`, so T4 no longer flags every owned lead.
+  - graph8 ignores unknown `custom_fields` on create, so the `crash_test_run` column is created once and set through the fields API.
+- graph8 copilot works (`source=ai`, about 12 credits and 7–16 s per call). T7 gives the AI 25 s on normal runs and 8 s on gate runs.
+- **Still blocked:** the key is `live`, not a sandbox, so `/sandbox/outbox` returns 404. Send-based tests (T1, T2, T3, T8) need a **test-mode / developer-sandbox key**.

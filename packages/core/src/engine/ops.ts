@@ -8,9 +8,9 @@ import { call } from "../graph8/client";
 import { runLog } from "../publish";
 import type { Workspace } from "../types";
 import { getBackend } from "./context";
-import { undoFix } from "./fixes";
+
 import { rebaseline } from "./gate";
-import { cleanupRun, discoverAndStore, distinctLeads } from "./run";
+import { cleanupRun, discoverAndStore, distinctLeads, undoAndResettle } from "./run";
 
 export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO> {
   const checks: ReadyDTO["checks"] = [];
@@ -72,13 +72,17 @@ export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO
 /** Clean up buyers, undo every applied fix (resumes sequences, restores the planted problems), rebaseline the gate. */
 export async function demoReset() {
   const log: string[] = [];
+  const live = await prisma.run.findMany({ where: { status: { in: ["QUEUED", "PLANNING", "RUNNING"] } } });
+  await prisma.run.updateMany({ where: { id: { in: live.map((r) => r.id) } }, data: { status: "FAILED", error: "Stopped by demo reset", finishedAt: new Date() } });
+  await prisma.testResult.updateMany({ where: { runId: { in: live.map((r) => r.id) }, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "ERROR", error: "Stopped by demo reset" } });
+  if (live.length) log.push(`Stopped ${live.length} run${live.length === 1 ? "" : "s"} in progress`);
   const cleaned = await cleanupRun();
   log.push(`Cleaned up ${cleaned} fake buyers`);
   const applied = await prisma.fix.findMany({ where: { status: "APPLIED" }, orderBy: { appliedAt: "desc" } });
   let undone = 0;
   for (const f of applied) {
     try {
-      await undoFix(f.id);
+      await undoAndResettle(f.id);
       undone++;
     } catch (e) {
       log.push(`Could not undo ${f.action}: ${(e as Error).message}`);
@@ -86,11 +90,24 @@ export async function demoReset() {
     }
   }
   log.push(`Undid ${undone} fixes (sequences resumed, planted problems restored)`);
-  await prisma.run.updateMany({ where: { status: { in: ["QUEUED", "PLANNING", "RUNNING"] } }, data: { status: "FAILED", error: "Stopped by demo reset", finishedAt: new Date() } });
   await discoverAndStore().catch(() => {});
   await rebaseline().catch(() => {});
   log.push("Gate baseline refreshed");
   return { ok: true, log };
+}
+
+/** Biggest pipeline first, then newest; one row per test + target (a finding repeated across runs counts once). */
+function topIssues<T extends { testId: string; targetId: string; pipelineAtRisk: unknown; createdAt: Date }>(rows: T[], n = 8) {
+  const seen = new Set<string>();
+  return [...rows]
+    .sort((a, b) => Number(b.pipelineAtRisk ?? 0) - Number(a.pipelineAtRisk ?? 0) || b.createdAt.getTime() - a.createdAt.getTime())
+    .filter((r) => {
+      const k = `${r.testId}|${r.targetId}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, n);
 }
 
 export async function buildReport(days = 7): Promise<ReportDTO> {
@@ -116,12 +133,13 @@ export async function buildReport(days = 7): Promise<ReportDTO> {
   const byArea = (["SELL", "BOOK", "BILL", "HYGIENE"] as Area[]).map((area) => ({
     area, tests: results.filter((r) => r.area === area).length,
     failures: failedFirst.filter((r) => r.area === area).length, fixed: fixed.filter((r) => r.area === area).length,
+    passed: results.filter((r) => r.area === area && r.status === "PASS").length,
+    errors: results.filter((r) => r.area === area && r.status === "ERROR").length,
   }));
-  const health = await prisma.healthScore.findMany({ orderBy: { createdAt: "desc" }, include: { sequence: true }, take: 50 });
-  const latest = [...new Map(health.map((h) => [h.sequenceId, h])).values()];
+  const latest = await prisma.healthScore.findMany({ distinct: ["sequenceId"], orderBy: { createdAt: "desc" }, include: { sequence: true } });
   const data = {
     byArea,
-    topIssues: failedFirst.slice(0, 8).map((r) => ({ testId: r.testId as TestId, testName: TEST_BY_ID[r.testId as TestId].name, target: r.targetName, summary: r.problem ?? r.summary ?? r.actual ?? "", status: r.status, pipelineAtRisk: Number(r.pipelineAtRisk ?? 0) })),
+    topIssues: topIssues(failedFirst).map((r) => ({ testId: r.testId as TestId, testName: TEST_BY_ID[r.testId as TestId].name, target: r.targetName, summary: r.problem ?? r.summary ?? r.actual ?? "", status: r.status, pipelineAtRisk: Number(r.pipelineAtRisk ?? 0) })),
     health: latest.map((h) => ({ name: h.sequence.name, score: h.score, band: h.band })),
   };
   const ws = await prisma.workspace.findFirst({ orderBy: { discoveredAt: "desc" } });

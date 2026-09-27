@@ -1,6 +1,6 @@
 "use client";
 
-import type { Area, ResultDTO, RunDTO, WorkspaceDTO } from "@crash/shared";
+import type { Area, FixDTO, ResultDTO, RunDTO } from "@crash/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutGroup } from "framer-motion";
 import { Play, ScrollText } from "lucide-react";
@@ -24,6 +24,10 @@ const COLUMNS: { key: string; label: string; match: (r: ResultDTO) => boolean; t
 ];
 const AREAS: (Area | "ALL")[] = ["ALL", "SELL", "BOOK", "BILL", "HYGIENE"];
 const ORDER = { FAIL: 0, NEEDS_APPROVAL: 1, ERROR: 2, RUNNING: 3, QUEUED: 4, FIXED: 5, PASS: 6 } as Record<string, number>;
+const RECORD_ONLY = new Set(["CREATE_TASK", "ADD_DEAL_NOTE"]);
+/** The fix that decides how this finding is handled: a pending approval, else the one that changed graph8. */
+const governing = (fixes: FixDTO[] = []) =>
+  fixes.find((f) => f.status === "PROPOSED" && f.mode === "APPROVE") ?? fixes.find((f) => !RECORD_ONLY.has(f.action)) ?? fixes[0];
 
 function Board({ id }: { id: string }) {
   const router = useRouter();
@@ -34,7 +38,6 @@ function Board({ id }: { id: string }) {
   const [area, setArea] = useState<Area | "ALL">("ALL");
   const open = params.get("result");
   const run = useQuery({ queryKey: ["run", id], queryFn: () => api<RunDTO>(`/api/runs/${id}`), refetchInterval: (q) => (q.state.data?.status === "DONE" || q.state.data?.status === "FAILED" ? false : 4000) });
-  const ws = useQuery({ queryKey: ["workspace"], queryFn: () => api<WorkspaceDTO | null>("/api/workspace") });
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,7 +47,11 @@ function Board({ id }: { id: string }) {
 
   const results = useMemo(() => [...(run.data?.results ?? [])].sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9)), [run.data]);
   const visible = results.filter((r) => area === "ALL" || r.area === area);
-  const focus = results.find((r) => r.id === selected) ?? results.find((r) => r.status === "FAIL" || r.status === "NEEDS_APPROVAL") ?? results.find((r) => r.status === "FIXED");
+  const focus =
+    results.find((r) => r.id === selected) ??
+    results.find((r) => r.status === "FAIL" || r.status === "NEEDS_APPROVAL") ??
+    results.find((r) => r.status === "FIXED") ??
+    results.find((r) => r.status === "ERROR");
   const detail = useQuery({ queryKey: ["result", focus?.id], queryFn: () => api<ResultDTO>(`/api/results/${focus!.id}`), enabled: !!focus });
 
   const openResult = useCallback((rid: string | null) => {
@@ -52,13 +59,20 @@ function Board({ id }: { id: string }) {
     if (rid) sp.set("result", rid); else sp.delete("result");
     router.replace(`/runs/${id}${sp.size ? `?${sp}` : ""}`, { scroll: false });
   }, [params, router, id]);
+  const closeDrawer = useCallback(() => openResult(null), [openResult]);
 
-  const applyAll = async (r: ResultDTO) => {
-    const d = await api<ResultDTO>(`/api/results/${r.id}`);
-    for (const f of d.fixes?.filter((x) => x.status === "PROPOSED") ?? []) await post(`/api/fixes/${f.id}/apply`);
-    toast({ tone: "info", message: `Applying fix for ${r.targetName}…` });
-    qc.invalidateQueries({ queryKey: ["run", id] });
-  };
+  // "Apply fix" on a card applies what is waiting for approval, nothing else.
+  const apply = useMutation({
+    mutationFn: async (r: ResultDTO) => {
+      const d = await api<ResultDTO>(`/api/results/${r.id}`);
+      const todo = d.fixes?.filter((x) => x.status === "PROPOSED" && x.mode === "APPROVE") ?? [];
+      for (const f of todo) await post(`/api/fixes/${f.id}/apply`);
+      return { r, n: todo.length };
+    },
+    onSuccess: ({ r, n }) => toast({ tone: "info", message: n ? `Applying ${n === 1 ? "fix" : `${n} fixes`} for ${r.targetName}…` : `Nothing left to apply for ${r.targetName}` }),
+    onError: (e: Error) => toast({ tone: "fail", message: e.message }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["run", id] }),
+  });
 
   const again = useMutation({
     mutationFn: () => post<{ id: string }>("/api/runs", {}),
@@ -71,7 +85,10 @@ function Board({ id }: { id: string }) {
   const t = d?.totals;
   const live = d && (d.status === "QUEUED" || d.status === "PLANNING" || d.status === "RUNNING");
   const failed = (t?.fail ?? 0) + (t?.needsApproval ?? 0) + (t?.fixed ?? 0);
-  const seqHealth = (ws.data?.sequences ?? []).filter((s) => s.health).sort((a, b) => (a.health!.score - b.health!.score));
+  const errors = t?.error ?? 0;
+  const couldnt = `${errors} check${errors === 1 ? "" : "s"} couldn't run`;
+  const seqHealth = [...(d?.health ?? [])].sort((a, b) => a.score - b.score);
+  const gov = governing(detail.data?.fixes);
 
   return (
     <div className="flex flex-col gap-4 lg:h-[calc(100vh-7.5rem)]">
@@ -82,7 +99,7 @@ function Board({ id }: { id: string }) {
             {d?.trigger === "GATE" ? "Pre-flight gate run" : "Run"} · {id.slice(-8)} {d ? `· ${duration(d.startedAt, d.finishedAt)}` : ""} {d?.planSource ? `· plan: ${d.planSource === "rules" ? "rules" : "graph8 AI"}` : ""}
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight">
-            {!d ? "Loading…" : live ? (d.status === "PLANNING" || d.status === "QUEUED" ? "Discovering and planning…" : "Running tests…") : d.status === "FAILED" ? "Run stopped" : failed ? `${failed} problem${failed === 1 ? "" : "s"} found` : "All checks passed"}
+            {!d ? "Loading…" : live ? (d.status === "PLANNING" || d.status === "QUEUED" ? "Discovering and planning…" : "Running tests…") : d.status === "FAILED" ? "Run stopped" : failed ? `${failed} problem${failed === 1 ? "" : "s"} found${errors ? ` · ${couldnt}` : ""}` : errors ? couldnt : "All checks passed"}
           </h1>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -135,7 +152,7 @@ function Board({ id }: { id: string }) {
                     {!d && c.key === "running" && [0, 1, 2].map((i) => <Skeleton key={i} className="h-24" />)}
                     {items.map((r) => (
                       <div key={r.id} onMouseEnter={() => setSelected(r.id)} onFocus={() => setSelected(r.id)}>
-                        <ResultCard r={r} selected={focus?.id === r.id} onOpen={() => openResult(r.id)} onApply={() => applyAll(r)} />
+                        <ResultCard r={r} selected={focus?.id === r.id} onOpen={() => openResult(r.id)} onApply={() => apply.mutate(r)} applying={apply.isPending && apply.variables?.id === r.id} />
                       </div>
                     ))}
                   </div>
@@ -148,16 +165,16 @@ function Board({ id }: { id: string }) {
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
           <Panel title={focus ? `Evidence · ${focus.testName}` : "Evidence"} right={focus && <button onClick={() => openResult(focus.id)} className="text-xs text-action hover:underline">Details</button>}>
             {!focus ? (
-              <p className="text-sm text-faint">{live ? "Evidence appears here as soon as a check fails." : "Nothing failed. Every check came back clean."}</p>
+              <p className="text-sm text-faint">{live ? "Evidence appears here as soon as a check fails." : d?.status === "FAILED" ? "The run stopped before any check failed." : "Nothing failed. Every check came back clean."}</p>
             ) : (
               <div className="space-y-3">
-                <p className="text-[15px] leading-snug">{focus.summary ?? focus.actual}</p>
+                <p className="text-[15px] leading-snug">{focus.status === "ERROR" ? `Couldn't check: ${focus.error ?? focus.actual ?? "unknown error"}` : focus.summary ?? focus.actual}</p>
                 {focus.whyItMatters && <p className="text-sm text-muted">{focus.whyItMatters}</p>}
                 {detail.data && <EvidenceList list={detail.data.evidence ?? []} compact />}
-                {detail.data?.fixes?.[0] && (
+                {gov && (
                   <div className="flex gap-1.5 font-mono text-[11px]" aria-label="Fix mode">
                     {(["AUTOPILOT", "APPROVE", "OFF"] as const).map((m) => (
-                      <span key={m} className={`rounded-md border px-2 py-1 ${detail.data!.fixes![0].mode === m ? "border-action/60 text-action" : "border-line text-faint"}`}>{m === "AUTOPILOT" ? "Autopilot" : m === "APPROVE" ? "Approve" : "Off"}</span>
+                      <span key={m} className={`rounded-md border px-2 py-1 ${gov.mode === m ? "border-action/60 text-action" : "border-line text-faint"}`}>{m === "AUTOPILOT" ? "Autopilot" : m === "APPROVE" ? "Approve" : "Off"}</span>
                     ))}
                   </div>
                 )}
@@ -166,16 +183,16 @@ function Board({ id }: { id: string }) {
           </Panel>
           <Panel title="Sequence health">
             {!seqHealth.length ? (
-              <p className="text-sm text-faint">Scores appear when the run finishes.</p>
+              <p className="text-sm text-faint">{live ? "Scores appear when the run finishes." : "This run didn't score any sequence."}</p>
             ) : (
               <ul className="space-y-3">
                 {seqHealth.map((s) => (
-                  <li key={s.id}>
+                  <li key={s.sequenceId}>
                     <Link href={`/sequences/${s.graph8Id}`} className="flex items-center gap-3 rounded-lg hover:bg-panel-2">
-                      <HealthRing score={s.health!.score} size={44} stroke={4} />
+                      <HealthRing score={s.score} size={44} stroke={4} />
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium">{s.name}</div>
-                        <div className="truncate text-xs text-muted">{s.health!.band === "HEALTHY" ? "healthy" : s.health!.band === "AT_RISK" ? "at risk" : "broken"}{s.health!.reasons.length ? ` · ${s.health!.reasons.join(", ")}` : ""}</div>
+                        <div className="truncate text-xs text-muted">{s.band === "HEALTHY" ? "healthy" : s.band === "AT_RISK" ? "at risk" : "broken"}{s.reasons.length ? ` · ${s.reasons.join(", ")}` : ""}</div>
                       </div>
                     </Link>
                   </li>
@@ -192,7 +209,7 @@ function Board({ id }: { id: string }) {
           </Panel>
         </div>
       </div>
-      <ResultDrawer resultId={open} onClose={() => openResult(null)} />
+      <ResultDrawer resultId={open} onClose={closeDrawer} />
     </div>
   );
 }

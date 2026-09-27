@@ -48,12 +48,23 @@ export const FIX_VERB: Record<FixAction, string> = {
   CANCEL_TEST_BOOKING: "Cancel test booking",
 };
 
+/** A step's wait, e.g. "after 2d 4h", "after 45m", "immediately". */
+export const delay = (minutes: number) => {
+  if (!minutes) return "immediately";
+  const d = Math.floor(minutes / 1440), h = Math.floor((minutes % 1440) / 60), m = Math.round(minutes % 60);
+  return `after ${[d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ")}`;
+};
+
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const BROKEN = [String.raw`\{\{[^}]*\}\}`, String.raw`\b(?:Hi|Hello|Hey|Dear)\s*,`, String.raw`\bundefined\b`, String.raw`\bnull\b`];
+// In a sent email any leftover {{tag}} is broken; in a template, {{tag}} is how merge fields are written.
+const BROKEN = {
+  rendered: [String.raw`\{\{[^}]*\}\}`, String.raw`\b(?:Hi|Hello|Hey|Dear)\s*,`, String.raw`\bundefined\b`, String.raw`\bnull\b`],
+  template: [String.raw`\{\{\s*\}\}`, String.raw`\{\{(?![^{}]*\}\})`, String.raw`(?<!\{\{[^{}]*)\}\}`, String.raw`\bundefined\b`, String.raw`\bnull\b`],
+};
 
 /** Split text into plain and highlighted runs: the given needle plus broken merge tokens. */
-export function highlightParts(text: string, needle?: string | null): { t: string; hit: boolean }[] {
-  const alts = [...(needle && needle.length > 1 ? [esc(needle)] : []), ...BROKEN];
+export function highlightParts(text: string, needle?: string | null, mode: keyof typeof BROKEN = "rendered"): { t: string; hit: boolean }[] {
+  const alts = [...(needle && needle.length > 1 ? [esc(needle)] : []), ...BROKEN[mode]];
   const split = new RegExp(`(${alts.join("|")})`);
   const whole = new RegExp(`^(?:${alts.join("|")})$`);
   return text.split(split).filter(Boolean).map((t) => ({ t, hit: whole.test(t) }));

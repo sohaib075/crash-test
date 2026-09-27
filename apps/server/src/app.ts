@@ -2,7 +2,7 @@
 // from index.ts so Supertest can drive it without a port.
 import {
   approveFix, buildReport, cleanupRun, demoReset, discoverAndStore, JOBS, loadSettings, readiness, rejectFix,
-  reportDTO, resultDetail, runDTO, saveReportToGraph8, shareReport, startRun, totals, undoFix, workspaceDTO,
+  reportDTO, resultDetail, runDTO, saveReportToGraph8, shareReport, startRun, totals, undoAndResettle, workspaceDTO,
   type Queue,
 } from "@crash/core";
 import { prisma } from "@crash/db";
@@ -64,7 +64,9 @@ export function createApp(queue: Queue) {
     res.status(201).json({ id: run.id });
   });
   app.get("/api/runs", async (req, res) => {
-    const take = Math.min(50, Number(req.query.limit ?? 20));
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(50).default(20) }).safeParse(req.query);
+    if (!q.success) throw new HttpError(400, "BAD_REQUEST", "limit must be a whole number from 1 to 50");
+    const take = q.data.limit;
     const runs = await prisma.run.findMany({ orderBy: { startedAt: "desc" }, take, include: { results: true } });
     res.json(runs.map((r) => ({ id: r.id, trigger: r.trigger, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, totals: totals(r.results, r) })));
   });
@@ -83,6 +85,19 @@ export function createApp(queue: Queue) {
   app.post("/api/results/:id/retest", async (req, res) => {
     const r = await prisma.testResult.findUnique({ where: { id: id(req) } });
     if (!r) throw notFound("Result");
+    // Claim it: one re-check at a time. A claim older than 10 minutes on a finished run is stale (lost job).
+    const stale = new Date(Date.now() - 10 * 60_000);
+    const claim = await prisma.testResult.updateMany({
+      where: {
+        id: r.id,
+        OR: [
+          { status: { notIn: ["QUEUED", "RUNNING"] }, OR: [{ retestStatus: null }, { retestStatus: { notIn: ["QUEUED", "RUNNING"] } }] },
+          { updatedAt: { lt: stale }, run: { is: { status: { not: "RUNNING" } } } },
+        ],
+      },
+      data: { retestStatus: "QUEUED" },
+    });
+    if (!claim.count) throw new HttpError(409, "RESULT_BUSY", "This test is already running");
     await queue.send(JOBS.retest, { resultId: r.id }, { singletonKey: `retest-${r.id}` });
     res.status(202).json({ ok: true });
   });
@@ -103,7 +118,7 @@ export function createApp(queue: Queue) {
   app.post("/api/fixes/:id/undo", async (req, res) => {
     const fixId = id(req);
     if (!(await prisma.fix.findUnique({ where: { id: fixId } }))) throw notFound("Fix");
-    const f = await undoFix(fixId);
+    const f = await undoAndResettle(fixId);
     res.json({ ok: true, status: f.status });
   });
 
@@ -120,7 +135,7 @@ export function createApp(queue: Queue) {
   });
   app.patch("/api/tests/:id", async (req, res) => {
     const b = body(PatchTestBody, req);
-    if (!TEST_BY_ID[req.params.id as TestId]) throw notFound("Test");
+    if (!Object.hasOwn(TEST_BY_ID, String(req.params.id))) throw notFound("Test");
     res.json(await prisma.testDefinition.update({ where: { id: String(req.params.id) }, data: b }));
   });
   app.get("/api/settings", async (_req, res) => void res.json(await loadSettings()));
@@ -147,8 +162,13 @@ export function createApp(queue: Queue) {
     const r = await prisma.report.findFirst({ orderBy: { createdAt: "desc" } });
     res.json(r ? reportDTO(r) : null);
   });
-  app.post("/api/reports/:id/save", async (req, res) => void res.json(await saveReportToGraph8(id(req))));
-  app.post("/api/reports/:id/share", async (req, res) => void res.json(await shareReport(id(req))));
+  const report = async (req: Request) => {
+    const r = await prisma.report.findUnique({ where: { id: id(req) } });
+    if (!r) throw notFound("Report");
+    return r.id;
+  };
+  app.post("/api/reports/:id/save", async (req, res) => void res.json(await saveReportToGraph8(await report(req))));
+  app.post("/api/reports/:id/share", async (req, res) => void res.json(await shareReport(await report(req))));
   app.get("/api/public/reports/:token", async (req, res) => {
     const token = String(req.params.token);
     if (!/^[a-f0-9]{64}$/.test(token)) throw notFound("Report");

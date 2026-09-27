@@ -9,6 +9,42 @@ import { normDeal, normOutbox, normQuote, normUser } from "./normalize";
 
 export const TAG_FIELD = "crash_test_run";
 
+// graph8 ignores unknown custom_fields on create (even with create_missing_fields),
+// so the tag column is created once and values are set with the fields API.
+const columns = new Map<string, Promise<{ id: number; slug: string }>>();
+function column(title: string) {
+  let p = columns.get(title);
+  if (!p) {
+    p = (async () => {
+      const list = data<Any[]>(await call("list_contact_fields_fields_get", { query: {} })) ?? [];
+      const hit = list.find((f) => f.id != null && (f.title === title || f.name === title || str(f.name).startsWith(`${title}_`)));
+      if (hit) return { id: Number(hit.id), slug: str(hit.name, title) };
+      const made = data<Any>(await call("create_field_fields_post", { body: { title, data_type: "text", entity: "contacts" } }));
+      return { id: Number(made.id), slug: str(made.name, title) };
+    })();
+    p.catch(() => columns.delete(title));
+    columns.set(title, p);
+  }
+  return p;
+}
+
+/** Team-member ids (what contacts' owner_id holds) keyed by PropelAuth user id and by email. */
+async function teamMemberIds(): Promise<Map<string, string> | null> {
+  let r: Any;
+  try {
+    r = data<Any>(await call("list_team_members_team_members_get", { query: {} }));
+  } catch {
+    return null; // T4 reports "couldn't check" instead of flagging every owned lead
+  }
+  const rows = ((r?.items ?? r?.team_members ?? []) as Any[]);
+  const out = new Map<string, string>();
+  for (const m of rows) {
+    if (m.propelauth_user_id) out.set(String(m.propelauth_user_id), String(m.id));
+    if (m.email) out.set(String(m.email).toLowerCase(), String(m.id));
+  }
+  return out;
+}
+
 async function steps(id: string): Promise<SeqStep[]> {
   const d = data<Any>(await call("list_sequence_steps_sequences__sequence_id__steps_get", { path: { sequence_id: id } }));
   return ((d.steps as Any[]) ?? [])
@@ -74,7 +110,7 @@ export const graph8Backend: Backend = {
   sequenceSteps: steps,
 
   async discover(): Promise<Workspace> {
-    const [status, seqRows, listRows, usersRes, mbRes, supRes, dealRows, quotes, links] = await Promise.all([
+    const [status, seqRows, listRows, usersRes, mbRes, supRes, dealRows, quotes, links, members] = await Promise.all([
       this.sandboxStatus(),
       allPages("list_sequences_sequences_get"),
       allPages("list_lists_lists_get", {}, 2),
@@ -84,9 +120,14 @@ export const graph8Backend: Backend = {
       allPages("list_deals_deals_get", { outcome: "open" }, 3).catch(() => [] as Any[]),
       quotesWithDetail().catch(() => [] as Quote[]),
       bookingLinks().catch(() => [] as BookingLink[]),
+      teamMemberIds(),
     ]);
 
-    const users = items(usersRes).map(normUser).filter((u) => u.id || u.email);
+    // Contacts' owner_id is the TEAM-MEMBER id, not the org user id: add it as an alias.
+    const users = items(usersRes).map(normUser).filter((u) => u.id || u.email).map((u) => {
+      const tm = members?.get(u.id) ?? members?.get(u.email);
+      return tm ? { ...u, aliases: [...new Set([...(u.aliases ?? []), tm])] } : u;
+    });
     const mailboxes: Mailbox[] = (((data<Any>(mbRes)?.mailboxes as Any[]) ?? [])).map((m) => ({
       id: str(m.id), email: str(m.email).toLowerCase(), ownerUserId: str(m.user_id, m.owner_id) || undefined,
     }));
@@ -125,6 +166,7 @@ export const graph8Backend: Backend = {
       sandbox: status.sandbox,
       keyMode: status.keyMode,
       writable: status.writable,
+      ownerIdsComplete: members !== null,
       fetchedAt: new Date().toISOString(),
       sequences,
       lists: listRows.map((l) => ({ id: str(l.id), name: str(l.title), size: Number(l.total ?? 0) })),
@@ -152,11 +194,20 @@ export const graph8Backend: Backend = {
         last_name: c.lastName || null,
         job_title: c.title || null,
         ...(c.company ? { company_domain: `${c.company.toLowerCase().replace(/[^a-z0-9]+/g, "")}.${config.testDomain}` } : {}),
-        ...(customFields ? { custom_fields: customFields, create_missing_fields: true } : {}),
       },
     }));
     if (r.contact_id == null) throw new Error(`create contact failed: ${JSON.stringify(r.validation_errors ?? r).slice(0, 300)}`);
-    return String(r.contact_id);
+    const contactId = String(r.contact_id);
+    // Tag the fake buyer (best effort: our database already tracks every buyer).
+    for (const [title, value] of Object.entries(customFields ?? {})) {
+      try {
+        const col = await column(title);
+        await call("set_field_value_fields__column_id__values_patch", { path: { column_id: col.id }, body: { record_id: Number(contactId), value, entity: "contacts" } });
+      } catch {
+        /* tagging is optional */
+      }
+    }
+    return contactId;
   },
 
   async deleteContact(id) {
@@ -165,12 +216,13 @@ export const graph8Backend: Backend = {
 
   async contactsByCustomField(field, value) {
     // No server-side filter exists; fetch test-domain contacts and filter client-side.
+    const slug = (await column(field).catch(() => null))?.slug ?? field;
     const rows = await allPages("list_contacts_contacts_get", { include_custom_fields: true }, 10);
     return rows
       .filter((c) => isTestEmail(str(c.work_email)))
       .filter((c) => {
         const cf = (c.custom_fields as Record<string, string | null>) ?? {};
-        const v = cf[field] ?? Object.entries(cf).find(([k]) => k.startsWith(field))?.[1];
+        const v = cf[slug] ?? cf[field] ?? Object.entries(cf).find(([k]) => k.startsWith(field))?.[1];
         return value ? v === value : !!v;
       })
       .map((c) => ({ contactId: String(c.id), email: str(c.work_email) }));

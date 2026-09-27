@@ -54,7 +54,8 @@ export function SequenceEvidence({ e, compact }: { e: EvidenceDTO; compact?: boo
 
 export function QuoteEvidence({ e }: { e: EvidenceDTO }) {
   const f = e.fields as { quoteTotal?: number | null; dealAmount?: number | null; deal?: string; lineItems?: number | null; expiresAt?: string | null; sender?: string; recipient?: string; status?: string };
-  const mismatch = f.quoteTotal != null && f.dealAmount != null && Math.abs(f.quoteTotal - f.dealAmount) / (f.dealAmount || 1) > 0.01;
+  // The check decides (with the tolerance from Settings); the page only shows its verdict.
+  const mismatch = e.highlight === "total_mismatch";
   return (
     <article className="overflow-hidden rounded-xl border border-line-2 bg-lab">
       <div className="flex items-center gap-2 border-b border-line px-3.5 py-2 text-xs text-muted">

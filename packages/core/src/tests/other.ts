@@ -10,6 +10,9 @@ export const T4: CrashTest = {
   id: "T4",
   targets: () => [{ type: "workspace", id: "owners", name: "All active leads", why: "Owner check" }],
   async check(ctx, _t, s) {
+    if (ctx.ws.ownerIdsComplete === false) {
+      return { pass: false, inconclusive: true, expected: "every active lead has an owner who still works here", actual: "Couldn't read graph8's team members, so owners can't be matched", evidence: [], facts: { count: 0 } };
+    }
     // Match an owner against every id variant graph8 returns for a team member.
     const current = new Set(ctx.ws.users.filter((u) => u.active).flatMap((u) => [u.id, u.email, ...(u.aliases ?? [])]));
     const rows = await ctx.backend.activeContactOwners();
@@ -70,7 +73,7 @@ export const T13: CrashTest = {
     }];
     return {
       pass: problems.length === 0,
-      expected: "total matches the deal (±1%), has line items, not expired, current sender, recipient not opted out",
+      expected: `total matches the deal (±${ctx.settings.quoteTolerancePct}%), has line items, not expired, current sender, recipient not opted out`,
       actual: problems.length ? problems.map((p) => p.message).join(" ") : `${q.total != null ? usd(q.total) : "total"} matches ${deal ? "the deal" : "(no linked deal)"}`,
       evidence,
       facts: { quote: q.number, problem: problems.map((p) => p.message).join(" "), deal: deal?.name },

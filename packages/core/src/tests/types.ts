@@ -69,6 +69,8 @@ export type Scratch = {
 
 export interface Ctx {
   runId: string;
+  /** GATE runs must block within ~30 s, so slow steps (AI) get shorter budgets. */
+  trigger: "MANUAL" | "GATE" | "SCHEDULE";
   ws: Workspace;
   settings: Settings;
   backend: Backend;

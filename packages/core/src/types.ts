@@ -57,6 +57,8 @@ export type Workspace = {
   sandbox: boolean;
   keyMode?: string;
   writable?: boolean;
+  /** false when graph8's team-member list couldn't be read, so owner ids can't be matched (T4). */
+  ownerIdsComplete?: boolean;
   fetchedAt: string;
   sequences: Sequence[];
   lists: ListInfo[];

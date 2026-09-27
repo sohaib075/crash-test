@@ -34,7 +34,8 @@ export default function SettingsPage() {
   });
   const setTest = useMutation({
     mutationFn: ({ id, ...b }: { id: string; enabled?: boolean; weight?: number }) => patch(`/api/tests/${id}`, b),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["tests"] }); if (v.weight !== undefined) toast({ tone: "pass", message: `${v.id} weight saved` }); },
+    onError: (e: Error) => { toast({ tone: "fail", message: e.message }); qc.invalidateQueries({ queryKey: ["tests"] }); },
   });
   const setSettings = useMutation({
     mutationFn: (b: Partial<Settings>) => patch<Settings>("/api/settings", b),
@@ -127,8 +128,19 @@ export default function SettingsPage() {
                   <label className="flex items-center gap-1 text-xs text-faint">
                     weight
                     <input
-                      type="number" min={0} max={100} defaultValue={t.weight}
-                      onBlur={(e) => Number(e.target.value) !== t.weight && setTest.mutate({ id: t.id, weight: Number(e.target.value) })}
+                      key={`${t.id}-${t.weight}`}
+                      type="number" min={0} max={100} step={1} defaultValue={t.weight}
+                      onBlur={(e) => {
+                        const raw = e.target.value.trim();
+                        const n = Number(raw);
+                        // Empty, fractional or out-of-range input is put back, not saved.
+                        if (!raw || !Number.isInteger(n) || n < 0 || n > 100) {
+                          if (raw !== String(t.weight)) toast({ tone: "fail", message: "Weight must be a whole number from 0 to 100" });
+                          e.target.value = String(t.weight);
+                          return;
+                        }
+                        if (n !== t.weight) setTest.mutate({ id: t.id, weight: n });
+                      }}
                       className="w-14 rounded-md border border-line bg-lab px-2 py-1 font-mono text-ink"
                     />
                   </label>

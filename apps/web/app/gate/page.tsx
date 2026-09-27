@@ -4,17 +4,20 @@ import type { GateEventDTO, Settings } from "@crash/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, ShieldX, Timer } from "lucide-react";
 import Link from "next/link";
+import { useToast } from "@/app/providers";
 import { ErrorBox, Panel, Skeleton } from "@/components/ui";
 import { api, patch } from "@/lib/api";
 import { ago } from "@/lib/format";
 
 export default function GatePage() {
   const qc = useQueryClient();
+  const toast = useToast();
   const ev = useQuery({ queryKey: ["gate"], queryFn: () => api<GateEventDTO[]>("/api/gate/events"), refetchInterval: 10_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/api/settings") });
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => patch("/api/gate", { enabled }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["settings"] }); qc.invalidateQueries({ queryKey: ["workspace"] }); },
+    onError: (e: Error) => toast({ tone: "fail", message: e.message }),
   });
   const on = settings.data?.gateEnabled ?? true;
   return (
@@ -38,9 +41,11 @@ export default function GatePage() {
           Gate {on ? "on" : "off"}
         </button>
       </div>
-      {ev.error && <ErrorBox error={ev.error} />}
+      {ev.error && <ErrorBox error={ev.error} onRetry={() => ev.refetch()} />}
       <Panel title="Timeline">
-        {ev.isLoading ? <Skeleton className="h-40" /> : !ev.data?.length ? (
+        {ev.isLoading ? <Skeleton className="h-40" /> : ev.error && !ev.data ? (
+          <p className="text-sm text-muted">The timeline couldn&apos;t be loaded.</p>
+        ) : !ev.data?.length ? (
           <p className="text-sm text-muted">No changes detected yet. Edit a step in a live graph8 sequence and it will show up here within {settings.data?.gatePollSec ?? 20} seconds.</p>
         ) : (
           <ol className="relative space-y-4 border-l border-line pl-6">
@@ -56,7 +61,8 @@ export default function GatePage() {
                     <span className="text-xs text-faint">{ago(e.detectedAt)}</span>
                   </div>
                   <p className="text-sm text-muted">
-                    Step {e.changedSteps.join(", ")} changed. {e.message}
+                    {e.result !== "CHECKING" && e.changedSteps.length > 0 && `${e.changedSteps.length === 1 ? "Step" : "Steps"} ${e.changedSteps.join(", ")} changed. `}
+                    {e.message}
                   </p>
                   {e.runId && <Link href={`/runs/${e.runId}`} className="text-sm text-action hover:underline">See the check →</Link>}
                 </li>

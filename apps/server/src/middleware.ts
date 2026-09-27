@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
-import { log } from "@crash/core";
+import { AppError, GraphError, log } from "@crash/core";
+import { Prisma } from "@crash/db";
 import { z } from "zod";
 
 export class HttpError extends Error {
@@ -14,13 +15,43 @@ export function body<T extends z.ZodType>(schema: T, req: Request): z.infer<T> {
   return r.data;
 }
 
+const CLIENT_ERRORS: Record<string, [number, string, string]> = {
+  "entity.parse.failed": [400, "BAD_REQUEST", "Request body is not valid JSON"],
+  "entity.too.large": [413, "PAYLOAD_TOO_LARGE", "Request body is too large"],
+  "encoding.unsupported": [415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported request encoding"],
+  "charset.unsupported": [415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported request charset"],
+};
+
 export function errors(err: unknown, req: Request, res: Response, _next: NextFunction) {
   void _next;
-  if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message, hint: err.hint } });
-  const e = err as { code?: string; message?: string; hint?: string; status?: number };
-  const status = e.code === "NO_KEY" ? 503 : e.status && e.status >= 400 && e.status < 600 ? 502 : 500;
+  const send = (status: number, code: string, message: string, hint?: string) => res.status(status).json({ error: { code, message, hint } });
+  if (err instanceof HttpError || err instanceof AppError) return send(err.status, err.code, err.message, err.hint);
+  const e = err as { code?: string; message?: string; hint?: string; status?: number; type?: string; expose?: boolean };
+
+  // body-parser / router errors are the client's fault: keep their 4xx, never call them a graph8 outage.
+  const known = e.type ? CLIENT_ERRORS[e.type] : undefined;
+  if (known || (e.expose && e.status && e.status >= 400 && e.status < 500)) {
+    log.warn({ path: req.path, type: e.type }, "bad request");
+    const [status, code, message] = known ?? [e.status!, "BAD_REQUEST", e.message ?? "Bad request"];
+    return send(status, code, message);
+  }
+  // Prisma: a missing row is a 404; anything else is ours, without internals.
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === "P2025") return send(404, "NOT_FOUND", "Not found");
+    log.error({ err, path: req.path }, "database request failed");
+    return send(500, "INTERNAL", "Something went wrong");
+  }
+  if (err instanceof Prisma.PrismaClientValidationError || err instanceof Prisma.PrismaClientInitializationError || err instanceof Prisma.PrismaClientUnknownRequestError) {
+    log.error({ err, path: req.path }, "database request failed");
+    return send(500, "INTERNAL", "Something went wrong");
+  }
+  // Only a graph8 call failing is a bad gateway.
+  if (err instanceof GraphError) {
+    log.error({ err, path: req.path }, "graph8 request failed");
+    return send(err.code === "NO_KEY" ? 503 : 502, err.code, err.message, err.hint);
+  }
   log.error({ err, path: req.path }, "request failed");
-  res.status(status).json({ error: { code: e.code ?? "INTERNAL", message: e.message ?? "Something went wrong", hint: e.hint } });
+  send(500, e.code ?? "INTERNAL", e.message ?? "Something went wrong", e.hint);
 }
 
 export function requestLog(req: Request, res: Response, next: NextFunction) {

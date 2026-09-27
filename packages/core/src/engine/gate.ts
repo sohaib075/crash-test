@@ -32,10 +32,12 @@ export async function gateTick(q: Queue) {
     if (last && JSON.stringify(last.stepHashes) === JSON.stringify(hashes)) continue;
     await prisma.sequenceSnapshot.create({ data: { sequenceId: seq.id, stepHashes: hashes, steps: steps as unknown as Prisma.InputJsonValue } });
     if (!last) continue; // first snapshot is the baseline
-    const changedSteps = hashes.map((h, i) => (h !== last.stepHashes[i] ? i + 1 : 0)).filter(Boolean);
+    // Compare over the longer list, so an added or removed step counts as a change too.
+    const n = Math.max(hashes.length, last.stepHashes.length);
+    const changedSteps = Array.from({ length: n }, (_, i) => (hashes[i] !== last.stepHashes[i] ? i + 1 : 0)).filter(Boolean);
     changed++;
     const run = await startRun(q, { trigger: "GATE", testIds: ["T7"], targetIds: [seq.graph8Id] });
-    await prisma.gateEvent.create({ data: { sequenceId: seq.id, runId: run.id, changedSteps, result: "CHECKING", message: `Step ${changedSteps.join(", ")} changed` } });
+    await prisma.gateEvent.create({ data: { sequenceId: seq.id, runId: run.id, changedSteps, result: "CHECKING", message: `${changedSteps.length === 1 ? "Step" : "Steps"} ${changedSteps.join(", ")} changed. Checking the new copy…` } });
     await publish({ type: "gate:checking", sequenceId: seq.graph8Id, name: seq.name, runId: run.id });
     log.info({ seq: seq.name, changedSteps }, "gate: change detected");
   }

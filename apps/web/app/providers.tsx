@@ -94,6 +94,10 @@ function LiveBridge({ children, push }: { children: React.ReactNode; push: (t: O
         qc.invalidateQueries({ queryKey: ["gate"] });
         qc.invalidateQueries({ queryKey: ["workspace"] });
       }
+      // Sequence pages show history, health and gate events: refresh them on any of those.
+      if (e.type === "run:updated" || e.type === "health:updated" || e.type.startsWith("gate:") || e.type.startsWith("fix:") || e.type === "result:updated") {
+        qc.invalidateQueries({ queryKey: ["sequence"] });
+      }
       if (e.type === "toast") push({ tone: e.tone, message: e.message, href: e.runId ? `/runs/${e.runId}${e.resultId ? `?result=${e.resultId}` : ""}` : undefined });
       if (e.type === "gate:checking") push({ tone: "info", message: `"${e.name}" changed. Pre-flight check running…`, href: `/runs/${e.runId}` });
     });

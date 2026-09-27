@@ -11,7 +11,7 @@
     "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
     "migrate:new": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js migrate dev --skip-seed --name",
     "studio": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js studio",
-    "seed": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local src/seed.ts",
+    "seed": "tsx --env-file-if-exists=../../.env src/seed.ts",
     "typecheck": "tsc -p ."
   },
   "prisma": {

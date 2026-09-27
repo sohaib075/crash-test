@@ -4,6 +4,7 @@ import { prisma, type Fix } from "@crash/db";
 import { FIX_ACTIONS, FIX_LABEL } from "@crash/shared";
 import type { FixArgs } from "../tests/types";
 import { isTestEmail } from "../config";
+import { AppError } from "../errors";
 import { publish, runLog } from "../publish";
 import { getBackend, tagList } from "./context";
 
@@ -88,7 +89,7 @@ export async function undoFix(fixId: string): Promise<Fix> {
   const b = getBackend();
   const fix = await prisma.fix.findUniqueOrThrow({ where: { id: fixId }, include: { result: true } });
   if (fix.status === "UNDONE") return fix;
-  if (fix.status !== "APPLIED") throw new Error("Only an applied fix can be undone");
+  if (fix.status !== "APPLIED") throw new AppError(409, "FIX_NOT_APPLIED", `This fix is ${fix.status.toLowerCase()}, so there is nothing to undo.`);
   const a = fix.args as FixArgs;
   let note: string | null = null;
   const before = fix.before as Record<string, unknown> | null;
@@ -105,6 +106,15 @@ export async function undoFix(fixId: string): Promise<Fix> {
         note = `Still paused: ${others} other fix${others === 1 ? "" : "es"} paused "${seq?.name ?? a.sequenceId}" too. Undo ${others === 1 ? "it" : "them"} to resume the sequence.`;
       } else if (/pause/i.test(await b.sequenceStatus(a.sequenceId!))) {
         await b.resumeSequence(a.sequenceId!);
+        // The block this pause enforced is over.
+        const row = await prisma.sequence.findUnique({ where: { graph8Id: a.sequenceId! } });
+        if (row) {
+          const open = await prisma.gateEvent.findMany({ where: { sequenceId: row.id, result: "BLOCKED" } });
+          if (open.length) {
+            await prisma.gateEvent.updateMany({ where: { id: { in: open.map((e) => e.id) } }, data: { result: "RELEASED", resolvedAt: new Date(), message: "Released: the pause was undone." } });
+            await publish({ type: "gate:released", sequenceId: row.graph8Id, name: row.name });
+          }
+        }
       }
       await prisma.sequence.updateMany({ where: { graph8Id: a.sequenceId! }, data: { status: await b.sequenceStatus(a.sequenceId!) } });
       break;

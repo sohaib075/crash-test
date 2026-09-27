@@ -239,7 +239,8 @@ export const T7: CrashTest = {
       if (!text) continue;
       const isEmail = /mail/i.test(st.type);
       const issues = contentIssues(st.body ?? "", isEmail).map((i) => ({ quote: i.quote, message: i.message }));
-      const { flags } = await promiseCheck(text, { timeoutMs: 8000 });
+      // graph8 copilot answers in ~7-16 s (measured). Gate runs must block fast: keywords + 8 s.
+      const { flags } = await promiseCheck(text, { timeoutMs: ctx.trigger === "GATE" ? 8_000 : 25_000 });
       for (const f of flags) issues.push({ quote: f.quote, message: `promises "${f.quote}", which nobody approved` });
       for (const i of issues) {
         first ??= { step: st.order, problem: i.message };

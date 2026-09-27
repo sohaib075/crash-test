@@ -10,6 +10,7 @@ configureAi({
 });
 
 export * from "./config";
+export * from "./errors";
 export * from "./log";
 export * from "./publish";
 export * from "./types";

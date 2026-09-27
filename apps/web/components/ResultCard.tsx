@@ -6,13 +6,14 @@ import { CheckCircle2 } from "lucide-react";
 import { AreaTag } from "./ui";
 import { money, STATUS_STYLE } from "@/lib/format";
 
-export function ResultCard({ r, selected, onOpen, onApply }: { r: ResultDTO; selected?: boolean; onOpen: () => void; onApply?: () => void }) {
+export function ResultCard({ r, selected, onOpen, onApply, applying }: { r: ResultDTO; selected?: boolean; onOpen: () => void; onApply?: () => void; applying?: boolean }) {
   const s = STATUS_STYLE[r.status];
   const running = r.status === "RUNNING" || r.status === "QUEUED";
   const pending = r.fixes?.filter((f) => f.status === "PROPOSED" && f.mode === "APPROVE") ?? [];
   const recorded = (r.writebacks?.length ?? 0) > 0 && (r.status === "FAIL" || r.status === "NEEDS_APPROVAL");
   const line =
     r.status === "RUNNING" && r.retestStatus === "RUNNING" ? "Re-testing…"
+    : r.status === "RUNNING" && r.fixes?.some((f) => f.status === "APPLIED" || f.appliedAt || (f.status === "PROPOSED" && f.mode === "AUTOPILOT")) ? "Applying fix…"
     : r.status === "RUNNING" ? "Checking…"
     : r.status === "QUEUED" ? "Waiting to start"
     : r.status === "ERROR" ? r.error ?? "Couldn't check"
@@ -55,13 +56,15 @@ export function ResultCard({ r, selected, onOpen, onApply }: { r: ResultDTO; sel
         <div className="mt-2.5 flex gap-2">
           <button
             type="button"
+            disabled={applying}
+            aria-busy={applying}
             onClick={(e) => {
               e.stopPropagation();
               onApply();
             }}
-            className="inline-flex h-7 items-center rounded-md bg-action px-2.5 text-xs font-semibold text-black hover:brightness-110"
+            className="inline-flex h-7 items-center rounded-md bg-action px-2.5 text-xs font-semibold text-black hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
           >
-            Apply fix
+            {applying ? "Applying…" : "Apply fix"}
           </button>
           <span className="inline-flex h-7 items-center rounded-md px-2 text-xs text-muted group-hover:text-ink">Details</span>
         </div>
