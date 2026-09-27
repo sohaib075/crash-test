@@ -1,0 +1,31 @@
+{
+  "name": "@crash/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env.local src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env.local src/index.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@crash/core": "*",
+    "@crash/db": "*",
+    "@crash/shared": "*",
+    "cors": "^2",
+    "express": "^5",
+    "pg": "^8",
+    "pg-boss": "^10",
+    "pino": "^9",
+    "pino-pretty": "^13",
+    "socket.io": "^4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2",
+    "@types/express": "^5",
+    "@types/pg": "^8",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.3.0"
+  }
+}

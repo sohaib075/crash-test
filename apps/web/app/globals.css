@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+/* Build plan v4 §15: a crash-test lab. Dark control room, hazard yellow for
+   actions, red and green only for results, monospace numbers. */
+:root {
+  --lab: #121317;
+  --panel: #1b1d23;
+  --panel-2: #22252d;
+  --line: #2d313b;
+  --line-2: #3a3f4b;
+  --ink: #eef0f4;
+  --muted: #9aa1ae;
+  --faint: #6b7280;
+  --action: #f2c230;
+  --fail: #f0715f;
+  --pass: #4fc27f;
+  --run: #6fa0f5;
+  --book: #ae8bf0;
+  --bill: #f2c230;
+  --hygiene: #5fc7c2;
+}
+
+@theme inline {
+  --color-lab: var(--lab);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-action: var(--action);
+  --color-fail: var(--fail);
+  --color-pass: var(--pass);
+  --color-run: var(--run);
+  --color-book: var(--book);
+  --color-hygiene: var(--hygiene);
+  --font-display: var(--font-archivo);
+  --font-sans: var(--font-plex);
+  --font-mono: var(--font-jetbrains);
+}
+
+html {
+  background: var(--lab);
+  color-scheme: dark;
+}
+body {
+  background: var(--lab);
+  color: var(--ink);
+  font-size: 15px;
+}
+
+/* Projector-ready: nothing below 14px except tiny labels in caps */
+.label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.hazard {
+  background: repeating-linear-gradient(-45deg, var(--action) 0 9px, #16171b 9px 18px);
+}
+
+.dummy {
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: conic-gradient(var(--action) 0 25%, #16171b 0 50%, var(--action) 0 75%, #16171b 0);
+  box-shadow: 0 0 0 2px #16171b, 0 0 0 3.5px var(--action);
+  flex: none;
+}
+
+mark.hit {
+  background: color-mix(in srgb, var(--fail) 28%, transparent);
+  color: #fff;
+  box-shadow: 0 0 0 1px var(--fail);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 45%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.pulse { animation: pulse-soft 1.6s ease-in-out infinite; }
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--panel) 25%, var(--panel-2) 50%, var(--panel) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; border: 2px solid var(--lab); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Grid items default to min-width:auto, so one truncated line can force a
+   whole column wider than a phone. Let every grid child shrink. */
+main .grid > * {
+  min-width: 0;
+}

@@ -1,0 +1,331 @@
+// Build plan v4 §19, plus: TestResult.state (resumable test scratch state),
+// Fix.preview (plain-English "what will change"), RunLog (agent log), Setting.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Area {
+  SELL
+  BOOK
+  BILL
+  HYGIENE
+}
+
+enum RunTrigger {
+  MANUAL
+  GATE
+  SCHEDULE
+}
+
+enum RunStatus {
+  QUEUED
+  PLANNING
+  RUNNING
+  DONE
+  FAILED
+}
+
+enum TestStatus {
+  QUEUED
+  RUNNING
+  PASS
+  FAIL
+  NEEDS_APPROVAL
+  FIXED
+  ERROR
+}
+
+enum FixAction {
+  PAUSE_SEQUENCE
+  RESUME_SEQUENCE
+  WITHDRAW_CONTACT
+  ADD_SUPPRESSION
+  REOWN_VIA_LIST
+  CREATE_TASK
+  ADD_DEAL_NOTE
+  CANCEL_TEST_BOOKING
+}
+
+enum FixMode {
+  AUTOPILOT
+  APPROVE
+  OFF
+}
+
+enum FixStatus {
+  PROPOSED
+  APPLIED
+  REJECTED
+  UNDONE
+  FAILED
+}
+
+enum EvidenceKind {
+  EMAIL
+  QUOTE
+  BOOKING
+  CONTACT
+  DEAL
+  SEQUENCE
+}
+
+enum GateResult {
+  CHECKING
+  BLOCKED
+  RELEASED
+}
+
+enum HealthBand {
+  HEALTHY
+  AT_RISK
+  BROKEN
+}
+
+model Workspace {
+  id           String     @id @default(cuid())
+  graph8Id     String     @unique
+  name         String
+  discoveredAt DateTime?
+  summary      Json?
+  sequences    Sequence[]
+  runs         Run[]
+  reports      Report[]
+}
+
+model Sequence {
+  id          String             @id @default(cuid())
+  graph8Id    String             @unique
+  workspaceId String
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id])
+  name        String
+  status      String
+  priority    Int                @default(0)
+  raw         Json
+  snapshots   SequenceSnapshot[]
+  health      HealthScore[]
+  gateEvents  GateEvent[]
+  updatedAt   DateTime           @updatedAt
+}
+
+model SequenceSnapshot {
+  id         String   @id @default(cuid())
+  sequenceId String
+  sequence   Sequence @relation(fields: [sequenceId], references: [id])
+  stepHashes String[]
+  steps      Json
+  takenAt    DateTime @default(now())
+
+  @@index([sequenceId, takenAt])
+}
+
+model TestDefinition {
+  id      String       @id
+  name    String
+  area    Area
+  weight  Int
+  tier    String
+  enabled Boolean      @default(true)
+  results TestResult[]
+}
+
+model FixModeSetting {
+  action FixAction @id
+  mode   FixMode   @default(APPROVE)
+}
+
+model Run {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
+  trigger        RunTrigger
+  status         RunStatus     @default(QUEUED)
+  plan           Json?
+  testIds        String[]
+  targetIds      String[]
+  error          String?
+  leadsProtected Int           @default(0)
+  pipelineAtRisk Decimal       @default(0) @db.Decimal(14, 2)
+  tagListId      String?
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  cleanedUp      Boolean       @default(false)
+  /// Phase 2 started: autopilot fixes + re-tests run only after every check finished.
+  fixPhase       Boolean       @default(false)
+  results        TestResult[]
+  buyers         FakeBuyer[]
+  health         HealthScore[]
+  gateEvent      GateEvent?
+  logs           RunLog[]
+}
+
+model RunLog {
+  id      String   @id @default(cuid())
+  runId   String
+  run     Run      @relation(fields: [runId], references: [id])
+  message String
+  at      DateTime @default(now())
+
+  @@index([runId, at])
+}
+
+model TestResult {
+  id             String         @id @default(cuid())
+  runId          String
+  run            Run            @relation(fields: [runId], references: [id])
+  testId         String
+  test           TestDefinition @relation(fields: [testId], references: [id])
+  area           Area
+  targetType     String
+  targetId       String
+  targetName     String
+  status         TestStatus     @default(QUEUED)
+  summary        String?
+  whyItMatters   String?
+  expected       String
+  actual         String?
+  error          String?
+  leadsAffected  Int?
+  pipelineAtRisk Decimal?       @db.Decimal(14, 2)
+  goalSec        Int?
+  actualSec      Int?
+  retestStatus   TestStatus?
+  state          Json?
+  /// Open deals behind pipelineAtRisk, so run totals count each deal once.
+  dealIds        String[]       @default([])
+  /// Real contacts behind leadsAffected, so totals count each lead once.
+  contactIds     String[]       @default([])
+  /// The original plain-English problem; summary is replaced by the fix sentence.
+  problem        String?
+  evidence       Evidence[]
+  fixes          Fix[]
+  writebacks     Writeback[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([runId, testId, targetId])
+  @@index([runId, status])
+}
+
+model Evidence {
+  id        String       @id @default(cuid())
+  resultId  String
+  result    TestResult   @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  kind      EvidenceKind
+  graph8Id  String
+  title     String
+  fields    Json
+  excerpt   String?
+  highlight String?
+  at        DateTime
+  raw       Json
+}
+
+model FakeBuyer {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id])
+  contactId String   @unique
+  email     String   @unique
+  testId    String
+  persona   Json
+  cleanedUp Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Fix {
+  id        String     @id @default(cuid())
+  resultId  String
+  result    TestResult @relation(fields: [resultId], references: [id])
+  action    FixAction
+  mode      FixMode
+  status    FixStatus  @default(PROPOSED)
+  targetId  String
+  args      Json
+  preview   String
+  before    Json
+  after     Json
+  reason    String
+  error     String?
+  appliedAt DateTime?
+  undoneAt  DateTime?
+  createdAt DateTime   @default(now())
+}
+
+model Writeback {
+  id        String     @id @default(cuid())
+  resultId  String
+  result    TestResult @relation(fields: [resultId], references: [id])
+  kind      String
+  graph8Id  String
+  createdAt DateTime   @default(now())
+
+  @@unique([resultId, kind])
+}
+
+model GateEvent {
+  id           String     @id @default(cuid())
+  sequenceId   String
+  sequence     Sequence   @relation(fields: [sequenceId], references: [id])
+  runId        String?    @unique
+  run          Run?       @relation(fields: [runId], references: [id])
+  changedSteps Int[]
+  message      String?
+  result       GateResult @default(CHECKING)
+  detectedAt   DateTime   @default(now())
+  resolvedAt   DateTime?
+}
+
+model HealthScore {
+  id         String     @id @default(cuid())
+  sequenceId String
+  sequence   Sequence   @relation(fields: [sequenceId], references: [id])
+  runId      String
+  run        Run        @relation(fields: [runId], references: [id])
+  score      Int
+  band       HealthBand
+  reasons    String[]
+  createdAt  DateTime   @default(now())
+
+  @@unique([sequenceId, runId])
+  @@index([sequenceId, createdAt])
+}
+
+model Report {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id])
+  periodStart    DateTime
+  periodEnd      DateTime
+  testsRun       Int
+  failures       Int
+  autoFixed      Int
+  leadsProtected Int
+  pipelineSaved  Decimal   @db.Decimal(14, 2)
+  summary        String
+  data           Json?
+  graph8TaskId   String?
+  shareToken     String?   @unique
+  createdAt      DateTime  @default(now())
+}
+
+model LlmCache {
+  hash      String   @id
+  purpose   String
+  output    Json
+  createdAt DateTime @default(now())
+}
+
+model Heartbeat {
+  id String   @id
+  at DateTime
+}
+
+model Setting {
+  key   String @id
+  value Json
+}

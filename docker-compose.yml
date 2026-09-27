@@ -1,0 +1,9 @@
+# Optional: Postgres via Docker. Without Docker, `npm run dev` starts an
+# embedded PostgreSQL 16 (packages/db/src/pg.ts) on the same port.
+services:
+  db:
+    image: postgres:16
+    environment: { POSTGRES_USER: crash, POSTGRES_PASSWORD: crash, POSTGRES_DB: crashtest }
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes: { pgdata: {} }

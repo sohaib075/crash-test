@@ -1,0 +1,18 @@
+{
+  "name": "@crash/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "typecheck": "tsc -p ." },
+  "dependencies": {
+    "@crash/ai": "*",
+    "@crash/db": "*",
+    "@crash/shared": "*",
+    "@graph8/sdk": "^0.245.0",
+    "p-limit": "^6",
+    "pino": "^9",
+    "zod": "^4.6.5"
+  }
+}

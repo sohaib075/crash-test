@@ -1,0 +1,31 @@
+{
+  "name": "crash-test",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "db": "npm run dev -w @crash/db",
+    "db:migrate": "npm run migrate -w @crash/db",
+    "db:seed": "npm run seed -w @crash/db",
+    "dev": "turbo run dev",
+    "dev:server": "npm run dev -w @crash/server",
+    "dev:worker": "npm run dev -w @crash/worker",
+    "dev:web": "npm run dev -w @crash/web",
+    "typecheck": "tsc -p . && turbo run typecheck",
+    "lint": "npm run lint -w @crash/web",
+    "test": "vitest run",
+    "gates": "tsx --env-file-if-exists=.env.local scripts/gates.ts",
+    "seed:graph8": "tsx --env-file-if-exists=.env.local scripts/seed-graph8.ts",
+    "reset:demo": "tsx --env-file-if-exists=.env.local scripts/reset-demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "tsx": "^4.23.15",
+    "turbo": "^2",
+    "typescript": "^5",
+    "vitest": "^5.0.2"
+  },
+  "packageManager": "npm@11.17.0"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@crash/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "typecheck": "tsc -p ." },
+  "dependencies": { "@crash/db": "*", "@crash/shared": "*", "zod": "^4.6.5" }
+}
