@@ -3,7 +3,7 @@
 // restarts are safe (§06).
 import { explain, plan as aiPlan, templateExplain } from "@crash/ai";
 import { Prisma, prisma, type FixMode } from "@crash/db";
-import { band, TEST_BY_ID, TERMINAL, type Area, type FixAction, type RunTrigger, type TestId } from "@crash/shared";
+import { band, LIVE_SAFE_TESTS, TEST_BY_ID, TERMINAL, type Area, type FixAction, type RunTrigger, type TestId } from "@crash/shared";
 import { log } from "../log";
 import { publish, runLog } from "../publish";
 import { RECORD_ONLY, REGISTRY } from "../tests/registry";
@@ -74,7 +74,10 @@ export async function planRun(q: Queue, runId: string) {
   await publish({ type: "run:updated", runId, status: "PLANNING" });
 
   const st = await getBackend().sandboxStatus();
-  if (!st.sandbox) {
+  // A live key (no sandbox) runs in live-safe mode: read-only checks only, no fake buyers,
+  // no email, and every fix waits for approval. LIVE_SAFE_MODE=off refuses live keys instead.
+  const liveSafe = !st.sandbox;
+  if (liveSafe && process.env.LIVE_SAFE_MODE === "off") {
     throw new Error(
       `Safety: ${st.name ?? "this workspace"} is a ${st.keyMode ?? "live"}${st.writable ? "" : ", read-only"} key, not a graph8 developer sandbox. ` +
         "Crash Test only runs fake buyers in a sandbox (the outbox exists only there). Add a sandbox key with write scopes to .env.",
@@ -89,8 +92,18 @@ export async function planRun(q: Queue, runId: string) {
   await runLog(runId, `Found ${n(ws.sequences.length, "sequence")}, ${n(ws.quotes.length, "sent quote")}, ${n(ws.deals.length, "open deal")}, ${n(ws.bookingLinks.length, "booking link")}, ${n(ws.users.length, "team member")}.`);
 
   const settings = await loadSettings();
+  let testIds = run.testIds as TestId[];
+  if (liveSafe) {
+    const skipped = testIds.filter((id) => !LIVE_SAFE_TESTS.includes(id));
+    testIds = testIds.filter((id) => LIVE_SAFE_TESTS.includes(id));
+    await runLog(
+      runId,
+      `Live key: live-safe mode. Only read-only checks run; no fake buyers, no emails, and every fix waits for your approval.` +
+        (skipped.length ? ` Skipped (they need a sandbox): ${skipped.map((id) => TEST_BY_ID[id].name).join(", ")}.` : ""),
+    );
+  }
   const candidates: (Target & { testId: TestId })[] = [];
-  for (const id of run.testIds as TestId[]) {
+  for (const id of testIds) {
     for (const t of REGISTRY[id]?.targets(ws, settings) ?? []) {
       if (run.targetIds.length && !run.targetIds.some((x) => t.id === x || t.id.split("+").includes(x))) continue;
       candidates.push({ ...t, testId: id });
@@ -102,7 +115,9 @@ export async function planRun(q: Queue, runId: string) {
     ? { tests: candidates.map((c) => ({ testId: c.testId, targetType: c.type, targetId: c.id, targetName: c.name, why: c.why })), source: "rules" }
     : await aiPlan(candidates.map((c) => ({ testId: c.testId, targetType: c.type, targetId: c.id, targetName: c.name, why: c.why })), summary);
 
-  await prisma.run.update({ where: { id: runId }, data: { workspaceId, plan: { ws, source: planned.source, tests: planned.tests } as unknown as Prisma.InputJsonValue } });
+  // Never trust the plan to stay inside the allow-list on a live key.
+  if (liveSafe) planned.tests = planned.tests.filter((t) => LIVE_SAFE_TESTS.includes(t.testId as TestId));
+  await prisma.run.update({ where: { id: runId }, data: { workspaceId, plan: { ws, source: planned.source, tests: planned.tests, liveSafe } as unknown as Prisma.InputJsonValue } });
   for (const t of planned.tests) {
     const def = TEST_BY_ID[t.testId as TestId];
     await prisma.testResult.upsert({
@@ -256,7 +271,10 @@ async function proposeFixes(q: Queue, resultId: string, target: Target, s: Scrat
   for (const p of proposals) {
     if (existing.some((f) => f.action === p.action && f.targetId === p.targetId)) continue;
     // The pre-flight gate exists to block: it pauses on its own (§10).
-    const mode: FixMode = isGate && p.action === "PAUSE_SEQUENCE" ? "AUTOPILOT" : m[p.action] ?? "APPROVE";
+    // Live-safe (live key): nothing changes in graph8 without a click, not even the gate's pause.
+    const mode: FixMode = liveSafeRun(r.run)
+      ? (m[p.action] === "OFF" ? "OFF" : "APPROVE")
+      : isGate && p.action === "PAUSE_SEQUENCE" ? "AUTOPILOT" : m[p.action] ?? "APPROVE";
     const fix = await prisma.fix.create({
       data: {
         resultId, action: p.action, mode, status: mode === "OFF" ? "REJECTED" : "PROPOSED", targetId: p.targetId,
@@ -319,6 +337,9 @@ export async function runFixPhase(q: Queue, runId: string) {
   await refreshTotals(runId);
   await q.send(JOBS.finalize, { runId }, { singletonKey: `fin-${runId}` });
 }
+
+/** The run was planned on a live key (read-only checks, approval-only fixes). */
+export const liveSafeRun = (run: { plan: unknown }) => (run.plan as { liveSafe?: boolean } | null)?.liveSafe === true;
 
 /** A settle threw: give a still-held result an honest status and let the run finish. */
 async function settleFailed(q: Queue, resultId: string, err: unknown) {

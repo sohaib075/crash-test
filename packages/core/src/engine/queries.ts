@@ -54,6 +54,7 @@ export async function runDTO(runId: string): Promise<RunDTO | null> {
   return {
     id: run.id, trigger: run.trigger, status: run.status, error: run.error, startedAt: run.startedAt.toISOString(),
     finishedAt: run.finishedAt?.toISOString() ?? null, planSource: (run.plan as { source?: string } | null)?.source ?? null,
+    liveSafe: (run.plan as { liveSafe?: boolean } | null)?.liveSafe === true,
     totals: totals(run.results, run), results: run.results.map(resultDTO),
     logs: run.logs.map((l) => ({ message: l.message, at: l.at.toISOString() })), buyers: run._count.buyers, cleanedUp: run.cleanedUp,
     health: run.health.map((h) => ({ sequenceId: h.sequenceId, graph8Id: h.sequence.graph8Id, name: h.sequence.name, score: h.score, band: h.band, reasons: h.reasons })),

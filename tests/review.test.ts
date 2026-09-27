@@ -108,13 +108,16 @@ describe("review regressions", () => {
     await discoverAndStore();
     await rebaseline();
     mockState().seqs.find((s) => s.id === "seq_in")!.steps[0].body = "Changed copy. Unsubscribe: {{unsubscribe_link}}";
-    const sandbox = (await import("../packages/core/src/mock")).mockBackend.sandboxStatus;
-    (await import("../packages/core/src/mock")).mockBackend.sandboxStatus = async () => ({ sandbox: false });
+    const mock = (await import("../packages/core/src/mock")).mockBackend;
+    const sandbox = mock.sandboxStatus;
+    mock.sandboxStatus = async () => {
+      throw new Error("graph8 is unreachable");
+    };
     try {
       await gateTick(queue);
       await drain();
     } finally {
-      (await import("../packages/core/src/mock")).mockBackend.sandboxStatus = sandbox;
+      mock.sandboxStatus = sandbox;
     }
     const ev = await prisma.gateEvent.findFirstOrThrow({ include: { run: true } });
     expect(ev.result).toBe("RELEASED");

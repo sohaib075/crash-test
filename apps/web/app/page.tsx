@@ -48,8 +48,8 @@ export default function WorkspacePage() {
           </p>
         </div>
         <div className="ml-auto flex flex-col items-end gap-2">
-          <Button variant="primary" size="lg" loading={run.isPending} onClick={() => run.mutate()} disabled={!w || !w.sandbox} title={w && !w.sandbox ? "Needs a graph8 sandbox key" : undefined}>
-            <Play className="h-5 w-5" /> Run all tests
+          <Button variant="primary" size="lg" loading={run.isPending} onClick={() => run.mutate()} disabled={!w} title={w && !w.sandbox ? "Live key: read-only checks only, no emails" : undefined}>
+            <Play className="h-5 w-5" /> {w && !w.sandbox ? "Run safe checks" : "Run all tests"}
           </Button>
           <button onClick={() => rediscover.mutate()} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink" disabled={rediscover.isPending}>
             <RefreshCw className={`h-3.5 w-3.5 ${rediscover.isPending ? "animate-spin" : ""}`} /> Re-read graph8
@@ -68,12 +68,15 @@ export default function WorkspacePage() {
         <div className="flex gap-4 rounded-2xl border border-action/50 bg-action/[0.06] px-5 py-4" role="alert">
           <div className="hazard w-1.5 shrink-0 rounded-full" />
           <div className="text-sm">
-            <div className="font-display text-base font-semibold text-action">Connected to {w.name}, but this isn&apos;t a sandbox</div>
+            <div className="font-display text-base font-semibold text-action">Live-safe mode: {w.name} is connected with a {w.keyMode ?? "live"} key</div>
             <p className="mt-1 text-muted">
-              This is a <span className="font-mono text-ink">{w.keyMode ?? "live"}</span> key{w.writable === false ? " with read-only scopes" : ""}. Crash Test only sends fake buyers
-              through a <b className="text-ink">graph8 developer sandbox</b>, where the outbox captures every send and nothing reaches a real inbox. Reading your workspace works; runs stay off.
+              Runs use <b className="text-ink">read-only checks</b> only: orphan leads, content check, contact limit, booking hosts and quote check.
+              No fake buyers are created and <b className="text-ink">no email is sent</b>. Every fix waits for your approval before anything changes in graph8.
             </p>
-            <p className="mt-1 text-muted">Add a sandbox key with write scopes (contacts, lists, sequences, tasks) to <code className="font-mono text-ink">.env</code> and restart.</p>
+            <p className="mt-1 text-muted">
+              The send tests (opt-out leak, double tap, broken personalisation, speed-to-lead) need a <b className="text-ink">graph8 developer sandbox</b> key and its base URL in{" "}
+              <code className="font-mono text-ink">.env</code>.
+            </p>
           </div>
         </div>
       )}

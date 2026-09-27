@@ -32,6 +32,12 @@ export const TEST_DEFS: TestDef[] = [
 ];
 export const TEST_BY_ID = Object.fromEntries(TEST_DEFS.map((t) => [t.id, t])) as Record<TestId, TestDef>;
 
+/**
+ * Live-safe mode (a live key, no sandbox): only checks that read graph8 run. They
+ * create no fake buyers and send no email; T1, T2, T3 and T8 need a sandbox outbox.
+ */
+export const LIVE_SAFE_TESTS: TestId[] = ["T4", "T7", "T9", "T11", "T13"];
+
 export const FIX_ACTIONS = [
   "PAUSE_SEQUENCE", "RESUME_SEQUENCE", "WITHDRAW_CONTACT", "ADD_SUPPRESSION",
   "REOWN_VIA_LIST", "CREATE_TASK", "ADD_DEAL_NOTE", "CANCEL_TEST_BOOKING",

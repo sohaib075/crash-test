@@ -105,6 +105,7 @@ function Board({ id }: { id: string }) {
         <div>
           <div className="font-mono text-xs text-faint">
             {d?.trigger === "GATE" ? "Pre-flight gate run" : "Run"} · {id.slice(-8)} {d ? `· ${duration(d.startedAt, d.finishedAt)}` : ""} {d?.planSource ? `· plan: ${d.planSource === "rules" ? "rules" : "graph8 AI"}` : ""}
+            {d?.liveSafe && <span className="ml-2 rounded border border-action/50 px-1.5 py-0.5 text-action" title="Live key: read-only checks, no emails, fixes need approval">live-safe</span>}
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight">
             {!d ? "Loading…" : live ? (d.status === "PLANNING" || d.status === "QUEUED" ? "Discovering and planning…" : "Running tests…") : d.status === "FAILED" ? "Run stopped" : rechecking && !failed ? "Re-checking…" : failed ? `${failed} problem${failed === 1 ? "" : "s"} found${errors ? ` · ${couldnt}` : ""}` : errors ? couldnt : "All checks passed"}

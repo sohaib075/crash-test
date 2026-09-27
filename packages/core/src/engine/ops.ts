@@ -30,23 +30,31 @@ export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO
   add("worker", "Worker alive", age != null && age < 30, age == null ? "No heartbeat yet. Start it: npm run dev:worker" : `Heartbeat ${age}s ago`);
 
   let ws: Workspace | null = null;
+  let sandbox = true;
   try {
     await call("list_org_users_roles_org_users_get", undefined, { retries: 1 });
     const st = await getBackend().sandboxStatus();
+    sandbox = st.sandbox;
     const match = !config.workspaceId || st.workspaceId === config.workspaceId;
-    add("key", "graph8 key valid, correct workspace", st.sandbox && match && st.writable !== false,
-      `${st.name ?? ""} · ${st.sandbox ? "sandbox" : `${st.keyMode ?? "live"} key, NOT a sandbox`}${st.writable === false ? " · read-only scopes" : ""} · org ${st.workspaceId ?? "?"}${config.workspaceId && !match ? ` (expected ${config.workspaceId})` : ""}`);
+    // A live key is fine in live-safe mode (read-only checks); it needs no write scopes then.
+    const liveSafe = !st.sandbox && process.env.LIVE_SAFE_MODE !== "off";
+    add("key", "graph8 key valid, correct workspace", (st.sandbox ? st.writable !== false : liveSafe) && match,
+      `${st.name ?? ""} · ${st.sandbox ? "sandbox" : liveSafe ? `${st.keyMode ?? "live"} key: live-safe mode (read-only checks, no emails)` : `${st.keyMode ?? "live"} key, NOT a sandbox`}${st.sandbox && st.writable === false ? " · read-only scopes" : ""} · org ${st.workspaceId ?? "?"}${config.workspaceId && !match ? ` (expected ${config.workspaceId})` : ""}`);
   } catch (e) {
     add("key", "graph8 key valid, correct workspace", false, (e as Error).message);
   }
 
   if (opts.lite) return { ok: checks.every((c) => c.ok), checks };
 
-  try {
-    const r = (await call("sandbox_outbox_sandbox_outbox_get", { query: { limit: 1 } }, { retries: 1 })) as { count?: number };
-    add("outbox", "Outbox reachable", true, `${r.count ?? 0} sends in the sandbox outbox`);
-  } catch (e) {
-    add("outbox", "Outbox reachable", false, (e as Error).message);
+  if (!sandbox && process.env.LIVE_SAFE_MODE !== "off") {
+    add("outbox", "Outbox (sandbox only)", true, "Not used in live-safe mode: no emails are sent");
+  } else {
+    try {
+      const r = (await call("sandbox_outbox_sandbox_outbox_get", { query: { limit: 1 } }, { retries: 1 })) as { count?: number };
+      add("outbox", "Outbox reachable", true, `${r.count ?? 0} sends in the sandbox outbox`);
+    } catch (e) {
+      add("outbox", "Outbox reachable", false, (e as Error).message);
+    }
   }
 
   try {
@@ -57,7 +65,10 @@ export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO
       const d = ws!.deals.find((x) => x.id === q.dealId);
       return q.total != null && d?.amount != null && d.amount > 0 && (Math.abs(q.total - d.amount) / d.amount) * 100 > tol;
     }).length;
-    const ok = ws.sequences.length >= 3 && ws.quotes.length >= 1;
+    // The full demo needs its seeded flows; live-safe mode just needs something to check.
+    const ok = !sandbox && process.env.LIVE_SAFE_MODE !== "off"
+      ? ws.sequences.length + ws.quotes.length + ws.bookingLinks.length > 0
+      : ws.sequences.length >= 3 && ws.quotes.length >= 1;
     add("demo", "Demo data present", ok, `${ws.sequences.length} sequences · ${ws.quotes.length} sent quotes (${mismatched} mismatched) · ${ws.bookingLinks.length} booking links · ${ws.deals.length} open deals`);
   } catch (e) {
     add("demo", "Demo data present", false, (e as Error).message);

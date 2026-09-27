@@ -35,7 +35,7 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
 - [x] E8 Clean-up → 0 fake buyers, tag list deleted
 - [~] **Run E1–E8 live on the demo workspace** once the key is in (Sun 12:00–4:00)
 
-`npm test`: 65 tests (rules, contract, API, E1–E8, review and audit regressions).
+`npm test`: 68 tests (rules, contract, API, E1–E8, review and audit regressions, deployment access).
 
 ## Verification pass (Sat 26 Sep, evening)
 - `npm run dev` from cold: Postgres + migrations + seed + API + worker + web from one command; heartbeat live.
@@ -138,6 +138,36 @@ A `g8_sbx_` key was provided. graph8 rejects it on production (`be.graph8.com`: 
 - Found and fixed while verifying:
   - The socket.io trailing slash (the server now accepts both forms).
   - An old `apps/web/.env.local` was baking `NEXT_PUBLIC_API_URL=http://localhost:4000` into production builds. It's removed, and `.dockerignore` now covers nested `.env*` files.
+- Independent review (16 agents, 4 areas, with a skeptic for each finding): 8 confirmed, 4 refuted because the current files already had the fix. All confirmed findings are fixed, plus the low-severity ones:
+  - **Leak:** `.pgdata` (the local database) would have been copied into the image. `.dockerignore` now excludes it, along with `data`, `docs`, `tests` and `*.md`.
+  - **CSRF:** with Basic auth, a browser attaches the cached password for any site. Mutating API calls and the live socket are refused when they come from another site (`Sec-Fetch-Site`, and `Origin` against the forwarded host).
+  - **Fail closed:** `start.mjs` refuses to start without an `APP_PASSWORD` of 12+ characters (opt out with `ALLOW_NO_PASSWORD=1`). Render generates one, and Compose requires it.
+  - **Proxy timeout:** Next's rewrite proxy timeout went from 30 s to 300 s (Reset demo and first discovery can exceed 30 s). Non-JSON 5xx responses now show a clear message.
+  - **Overlapping deploys:** the worker is a singleton (Postgres advisory lock), so a new container waits for the old worker instead of re-running its tests.
+  - **Compose:**
+    - The database URL is built and encoded from `POSTGRES_*`, so any password works.
+    - `pg_isready` checks over TCP.
+    - `DOMAIN` is optional unless the https profile is used.
+    - `APP_BIND` keeps plain HTTP private behind Caddy, and Caddy sends HSTS.
+  - **Runtime:**
+    - `tsx` runs in-process (`node --import tsx`). This saves about 80 MB (384 MB idle) and lets signals reach the services.
+    - Signals are handled during migrations.
+    - A crashed child gives a non-zero exit.
+    - The API only stops pg-boss if it started it, and the LISTEN reconnect backs off instead of crashing.
+    - Migrations retry (6 × 5 s) while the database starts.
+  - **Headers:** `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (share tokens live in URLs). `tini` runs as PID 1.
+  - **Docs:** use the direct (not pooler) `DATABASE_URL`, sslmode notes for private CAs, Render database `ipAllowList: []`, and at least 1 GB RAM.
+- Dev (`npm run dev`) uses the same proxy: API, live data and websocket verified. No password in dev.
+- **Not done yet:** the deployment files aren't committed. Render and Railway build from the git repository.
+
+## Live-safe mode (Sun 27 Sep, ~4:45 PM)
+The sandbox key can't be used yet: its base URL is unknown, and graph8 rejects it on both documented servers. So a live key now runs in **live-safe mode** instead of being refused:
+- **Checks:** only T4, T7, T9, T11 and T13 run (they only read graph8). T1, T2, T3 and T8 are skipped, with a log line saying why.
+- **Safety:** `ctx.buyer` refuses to create a fake buyer on a live-safe run, and every fix (including the gate's automatic pause) is forced to Approve.
+- **UI and readiness:** they show the mode ("Run safe checks", a banner, and a `live-safe` label on the run page).
+- **Opt out:** `LIVE_SAFE_MODE=off` restores the strict refusal.
+- **Live test on "Hackathon Usman Hassan":** 6 checks and 3 real findings: two quotes that don't match their deals, and a booking link routed to someone who left. $11,200 at risk, 0 fake buyers, 0 emails, nothing changed.
+- `tests/livesafe.test.ts` covers it. `npm test`: 72 tests.
 
 ## Go-live checklist (needs GRAPH8_API_KEY)
 1. [ ] Put the key in `.env`, then `npm run dev`

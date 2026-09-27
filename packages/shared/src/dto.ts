@@ -78,6 +78,8 @@ export type RunDTO = {
   startedAt: string;
   finishedAt: string | null;
   planSource: string | null;
+  /** Ran on a live key: read-only checks only, every fix waits for approval. */
+  liveSafe: boolean;
   totals: RunTotals;
   results: ResultDTO[];
   logs: { message: string; at: string }[];

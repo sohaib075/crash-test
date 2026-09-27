@@ -180,7 +180,8 @@ npm start       # migrate, then web on $PORT + API + worker
 
 - **Environment Lock:** Keys live only in the server/worker. The browser only communicates with our internal API.
 - **Access:** Deployments need `APP_PASSWORD`. Every page, API call and live connection then needs it, except shared report links and the health check. Requests that change something (and the live connection) are refused when they come from another site, so a cached password can't be abused cross-site. Plain `npm run dev` stays open for local work.
-- **Sandbox Only:** Runs refuse to start unless the workspace status confirms it is a sandbox environment.
+- **Sandbox for sends:** Tests that send email to fake buyers (opt-out leak, double tap, broken personalisation, speed-to-lead) run only in a graph8 developer sandbox.
+- **Live-safe mode:** With a live key, runs use the read-only checks only (orphan leads, content check, contact limit, booking hosts, quote check). No fake buyers are created, no email is sent, and every fix, including the gate's pause, waits for approval. Set `LIVE_SAFE_MODE=off` to refuse live keys entirely.
 - **Domain Restriction:** Fake buyers exclusively use the `TEST_DOMAIN`.
 - **Non-Destructive Fixes:** Fixes are strictly allow-listed. The system never emails real contacts, deletes real user records, or edits sent quotes.
 - **Audit Trails:** Every applied fix stores its real before/after state from graph8 and can be fully undone.
