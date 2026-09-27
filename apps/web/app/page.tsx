@@ -41,7 +41,7 @@ export default function WorkspacePage() {
           </p>
         </div>
         <div className="ml-auto flex flex-col items-end gap-2">
-          <Button variant="primary" size="lg" loading={run.isPending} onClick={() => run.mutate()} disabled={!w}>
+          <Button variant="primary" size="lg" loading={run.isPending} onClick={() => run.mutate()} disabled={!w || !w.sandbox} title={w && !w.sandbox ? "Needs a graph8 sandbox key" : undefined}>
             <Play className="h-5 w-5" /> Run all tests
           </Button>
           <button onClick={() => rediscover.mutate()} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink" disabled={rediscover.isPending}>
@@ -52,9 +52,23 @@ export default function WorkspacePage() {
 
       {ws.error && (
         <ErrorBox
-          error={(ws.error as ApiError).code === "NO_KEY" ? { message: "graph8 isn't connected yet", hint: "Add GRAPH8_API_KEY (sandbox) to .env.local and restart the server." } : ws.error}
+          error={(ws.error as ApiError).code === "NO_KEY" ? { message: "graph8 isn't connected yet", hint: "Add GRAPH8_API_KEY (sandbox) to .env and restart the server." } : ws.error}
           onRetry={() => ws.refetch()}
         />
+      )}
+
+      {w && !w.sandbox && (
+        <div className="flex gap-4 rounded-2xl border border-action/50 bg-action/[0.06] px-5 py-4" role="alert">
+          <div className="hazard w-1.5 shrink-0 rounded-full" />
+          <div className="text-sm">
+            <div className="font-display text-base font-semibold text-action">Connected to {w.name}, but this isn&apos;t a sandbox</div>
+            <p className="mt-1 text-muted">
+              This is a <span className="font-mono text-ink">{w.keyMode ?? "live"}</span> key{w.writable === false ? " with read-only scopes" : ""}. Crash Test only sends fake buyers
+              through a <b className="text-ink">graph8 developer sandbox</b>, where the outbox captures every send and nothing reaches a real inbox. Reading your workspace works; runs stay off.
+            </p>
+            <p className="mt-1 text-muted">Add a sandbox key with write scopes (contacts, lists, sequences, tasks) to <code className="font-mono text-ink">.env</code> and restart.</p>
+          </div>
+        </div>
       )}
 
       {ws.isLoading && (

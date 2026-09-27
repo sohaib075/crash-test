@@ -1,38 +1,42 @@
-// Local PostgreSQL 16 without Docker: real Postgres binaries via embedded-postgres.
-// `npm run db` starts it on :5432 (data in .pgdata/) and keeps it running.
-// If you have Docker, `docker compose up -d` does the same job.
+// Database for `npm run dev`. DATABASE_URL in the root .env decides:
+//   • local default (postgresql://crash:crash@localhost:5432/crashtest) → starts an
+//     embedded PostgreSQL 16 (real binaries, data in .pgdata/, no Docker needed)
+//   • anything else (Docker, your own Postgres, Neon, Supabase, RDS…) → uses it as-is
+// Either way it then applies migrations and seeds the defaults.
 import EmbeddedPostgres from "embedded-postgres";
-import { execSync } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
+import { migrateAndSeed } from "./migrate";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const dataDir = path.join(root, ".pgdata");
-const port = Number(process.env.PGPORT ?? 5432);
-
-const pg = new EmbeddedPostgres({
-  databaseDir: dataDir,
-  user: "crash",
-  password: "crash",
-  port,
-  persistent: true,
-  // Windows defaults to WIN1252; the app stores emoji, arrows and names from any locale.
-  initdbFlags: ["--encoding=UTF8", "--locale=C"],
-  onLog: () => {},
-});
+const LOCAL = "postgresql://crash:crash@localhost:5432/crashtest";
+const url = process.env.DATABASE_URL || LOCAL;
+const embedded = process.env.EMBEDDED_PG === "on" || (process.env.EMBEDDED_PG !== "off" && url === LOCAL);
 
 async function main() {
+  if (!embedded) {
+    await migrateAndSeed(url);
+    console.log(`Using your PostgreSQL at ${redact(url)}: migrated and seeded`);
+    return; // nothing to keep running
+  }
+  const port = Number(new URL(url).port || 5432);
+  const pg = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "crash",
+    password: "crash",
+    port,
+    persistent: true,
+    // Windows defaults to WIN1252; the app stores emoji, arrows and names from any locale.
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    onLog: () => {},
+  });
   const fresh = !existsSync(path.join(dataDir, "PG_VERSION"));
   if (fresh) await pg.initialise();
   await pg.start();
   if (fresh) await pg.createDatabase("crashtest");
-  const url = `postgresql://crash:crash@localhost:${port}/crashtest`;
-  // Apply migrations and seed defaults so `npm run dev` is the only command needed.
-  execSync("npx prisma migrate deploy", { cwd: path.join(root, "packages/db"), env: { ...process.env, DATABASE_URL: url }, stdio: "ignore" });
-  process.env.DATABASE_URL = url;
-  const { seedDefaults } = await import("./seed");
-  await seedDefaults();
-  console.log(`PostgreSQL 16 ready on :${port}, migrated and seeded  (DATABASE_URL=${url})`);
+  await migrateAndSeed(url);
+  console.log(`PostgreSQL 16 (embedded) ready on :${port}, migrated and seeded`);
   const stop = async () => {
     await pg.stop();
     process.exit(0);
@@ -41,7 +45,11 @@ async function main() {
   process.on("SIGTERM", stop);
 }
 
+function redact(u: string) {
+  return u.replace(/\/\/([^:/@]+):[^@]*@/, "//$1:****@");
+}
+
 main().catch((e) => {
-  console.error(e);
+  console.error(e.message ?? e);
   process.exit(1);
 });

@@ -4,7 +4,8 @@ import type { Deal, NewContact, OwnerRow, SentEmail, Workspace } from "./types";
 
 export interface Backend {
   kind: "graph8" | "mock";
-  sandboxStatus(): Promise<{ sandbox: boolean; workspaceId?: string; name?: string; detail?: unknown }>;
+  /** sandbox=false for live keys; writable=false when the key has no write scopes. */
+  sandboxStatus(): Promise<{ sandbox: boolean; workspaceId?: string; name?: string; keyMode?: string; writable?: boolean; detail?: unknown }>;
   discover(): Promise<Workspace>;
   sequenceSteps(sequenceId: string): Promise<Workspace["sequences"][number]["steps"]>;
 

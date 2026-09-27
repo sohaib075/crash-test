@@ -15,7 +15,7 @@ const limit = pLimit(config.concurrency);
 let ready = false;
 function api() {
   if (!ready) {
-    if (!config.apiKey) throw new GraphError("NO_KEY", "GRAPH8_API_KEY is not set", 0, "Add your sandbox key to .env.local and restart.");
+    if (!config.apiKey) throw new GraphError("NO_KEY", "GRAPH8_API_KEY is not set", 0, "Add your sandbox key to .env and restart.");
     g8.init({ apiKey: config.apiKey, ...(config.baseUrl ? { apiUrl: config.baseUrl } : {}) } as Parameters<typeof g8.init>[0]);
     ready = true;
   }

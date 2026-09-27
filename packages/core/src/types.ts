@@ -55,6 +55,8 @@ export type Workspace = {
   graph8Id: string;
   name: string;
   sandbox: boolean;
+  keyMode?: string;
+  writable?: boolean;
   fetchedAt: string;
   sequences: Sequence[];
   lists: ListInfo[];

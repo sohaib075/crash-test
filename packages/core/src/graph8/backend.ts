@@ -57,8 +57,18 @@ export const graph8Backend: Backend = {
   kind: "graph8",
 
   async sandboxStatus() {
-    const r = (await call("sandbox_status_sandbox_status_get")) as Any;
-    return { sandbox: r.sandbox === true, workspaceId: str(r.org_id), name: str(r.org_name, r.environment, "graph8 sandbox"), detail: r };
+    // /me works for every key: org, live/test mode and scopes.
+    const me = data<Any>(await call("describe_current_key_me_get", undefined, { retries: 1 }).catch(() => ({}) as Any));
+    const scopes = (me.scopes as string[] | undefined) ?? [];
+    const writable = me.unrestricted === true || scopes.some((s) => !s.endsWith(":read"));
+    try {
+      const r = (await call("sandbox_status_sandbox_status_get", undefined, { retries: 1 })) as Any;
+      return { sandbox: r.sandbox === true, workspaceId: str(r.org_id, me.org_id), name: str(me.org_name, r.org_name, "graph8 sandbox"), keyMode: str(me.key_mode), writable, detail: r };
+    } catch (err) {
+      // Live keys get a 404 here ("available only in the graph8 developer sandbox").
+      if ((err as { status?: number }).status !== 404) throw err;
+      return { sandbox: false, workspaceId: str(me.org_id), name: str(me.org_name, "graph8 workspace"), keyMode: str(me.key_mode, "live"), writable, detail: me };
+    }
   },
 
   sequenceSteps: steps,
@@ -113,6 +123,8 @@ export const graph8Backend: Backend = {
       graph8Id: status.workspaceId ?? "",
       name: status.name ?? "graph8 workspace",
       sandbox: status.sandbox,
+      keyMode: status.keyMode,
+      writable: status.writable,
       fetchedAt: new Date().toISOString(),
       sequences,
       lists: listRows.map((l) => ({ id: str(l.id), name: str(l.title), size: Number(l.total ?? 0) })),

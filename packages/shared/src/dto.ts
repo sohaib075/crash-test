@@ -105,6 +105,8 @@ export type WorkspaceDTO = {
   name: string;
   discoveredAt: string | null;
   sandbox: boolean;
+  keyMode?: string;
+  writable?: boolean;
   sequences: SequenceDTO[];
   quotes: { id: string; number: string; status: string; total: number | null; dealAmount: number | null; currency: string }[];
   bookingLinks: { id: string; name: string; hosts: string[] }[];

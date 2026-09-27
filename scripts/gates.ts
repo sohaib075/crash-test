@@ -15,7 +15,7 @@ const arg = (k: string) => (process.argv.indexOf(k) > 0 ? process.argv[process.a
 
 async function main() {
   const b = getBackend();
-  if (!config.apiKey) throw new Error("GRAPH8_API_KEY is not set in .env.local");
+  if (!config.apiKey) throw new Error("GRAPH8_API_KEY is not set in .env");
 
   const st = await b.sandboxStatus();
   add("G0", "Sandbox workspace", st.sandbox, `sandbox=${st.sandbox} org=${st.workspaceId}`);

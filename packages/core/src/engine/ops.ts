@@ -33,7 +33,8 @@ export async function readiness(opts: { lite?: boolean } = {}): Promise<ReadyDTO
     await call("list_org_users_roles_org_users_get", undefined, { retries: 1 });
     const st = await getBackend().sandboxStatus();
     const match = !config.workspaceId || st.workspaceId === config.workspaceId;
-    add("key", "graph8 key valid, correct workspace", st.sandbox && match, `${st.sandbox ? "Sandbox" : "NOT a sandbox"} · org ${st.workspaceId ?? "?"}${config.workspaceId && !match ? ` (expected ${config.workspaceId})` : ""}`);
+    add("key", "graph8 key valid, correct workspace", st.sandbox && match && st.writable !== false,
+      `${st.name ?? ""} · ${st.sandbox ? "sandbox" : `${st.keyMode ?? "live"} key, NOT a sandbox`}${st.writable === false ? " · read-only scopes" : ""} · org ${st.workspaceId ?? "?"}${config.workspaceId && !match ? ` (expected ${config.workspaceId})` : ""}`);
   } catch (e) {
     add("key", "graph8 key valid, correct workspace", false, (e as Error).message);
   }

@@ -4,11 +4,13 @@
 
 > graph8 logs what the machine did. Crash Test proves it does what you think.
 
+**Team:** Usman Hassan · Muhammad Sohaib (graph8 Programmable Revenue Hackathon, 27 Sep 2026)
+
 ## Run it
 
 ```bash
 npm install
-cp .env.example .env.local      # add GRAPH8_API_KEY (sandbox): the only key needed
+cp .env.example .env            # add GRAPH8_API_KEY (sandbox): the only key needed
 npm run dev                     # Postgres 16 + API :4000 + worker + web :3000
 ```
 
@@ -23,6 +25,23 @@ npm run dev                     # Postgres 16 + API :4000 + worker + web :3000
 | `npm run typecheck` / `npm run lint` | Strict TypeScript everywhere, ESLint on the web app |
 
 Open **http://localhost:3000/ready** before a demo. Every line must be green.
+
+## Database
+
+PostgreSQL 16 + Prisma 6 (`packages/db`). pg-boss keeps its job queue in the same database (schema `pgboss`). **`DATABASE_URL` in `.env` is the only setting.**
+
+| Setup | `DATABASE_URL` | What `npm run dev` does |
+|---|---|---|
+| Built-in (default) | `postgresql://crash:crash@localhost:5432/crashtest` | Starts an embedded PostgreSQL 16 (data in `.pgdata/`), migrates, seeds |
+| Docker | same as above, after `docker compose up -d` (set `EMBEDDED_PG=off`) | Migrates and seeds your container |
+| Your own / hosted (Neon, Supabase, RDS…) | `postgresql://USER:PASS@HOST:5432/DB?sslmode=require` | Migrates and seeds it; no embedded server |
+
+| Command | What it does |
+|---|---|
+| `npm run db:migrate` | Apply all migrations + seed defaults (safe to repeat) |
+| `npm run db:studio` | Browse the data at http://localhost:5555 |
+| `npm run db:new-migration -- <name>` | After editing `schema.prisma`: create and apply a migration |
+| `npm run db:seed` | Re-seed test library, fix modes and settings |
 
 ## How it works
 

@@ -21,6 +21,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Nav />
           <GateBanner />
           <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6">{children}</main>
+          <footer className="mx-auto w-full max-w-[1440px] px-4 pb-6 text-xs text-faint sm:px-6">
+            Crash Test · built by Usman Hassan &amp; Muhammad Sohaib for the graph8 Programmable Revenue Hackathon
+          </footer>
         </Providers>
       </body>
     </html>

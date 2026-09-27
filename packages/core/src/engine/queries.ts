@@ -83,7 +83,7 @@ export async function workspaceDTO(): Promise<WorkspaceDTO | null> {
   const last = await prisma.run.findFirst({ where: { trigger: "MANUAL" }, orderBy: { startedAt: "desc" }, include: { results: true } });
   const openDeals = ws.deals.filter((d) => d.open);
   return {
-    graph8Id: w.graph8Id, name: w.name, discoveredAt: w.discoveredAt?.toISOString() ?? null, sandbox: ws.sandbox, sequences,
+    graph8Id: w.graph8Id, name: w.name, discoveredAt: w.discoveredAt?.toISOString() ?? null, sandbox: ws.sandbox, keyMode: ws.keyMode, writable: ws.writable, sequences,
     quotes: ws.quotes.map((q) => ({ id: q.id, number: q.number, status: q.status, total: q.total, currency: q.currency, dealAmount: ws.deals.find((d) => d.id === q.dealId)?.amount ?? null })),
     bookingLinks: ws.bookingLinks.map((b) => ({ id: b.id, name: b.name, hosts: b.hostEmails })),
     users: ws.users.filter((u) => u.active).map((u) => ({ id: u.id, email: u.email, name: u.name })),

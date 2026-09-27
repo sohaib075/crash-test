@@ -11,7 +11,7 @@ const port = Number(process.env.SERVER_PORT ?? 4000);
 const origin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 
 async function main() {
-  if (!config.apiKey) log.warn("GRAPH8_API_KEY is not set: graph8 calls will fail until it's added to .env.local");
+  if (!config.apiKey) log.warn("GRAPH8_API_KEY is not set: graph8 calls will fail until it's added to .env");
   await waitForDb();
   const { app } = createApp(queue);
   const http = createServer(app);

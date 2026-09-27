@@ -6,12 +6,13 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "generate": "prisma generate",
-    "migrate": "prisma migrate dev --name init --skip-seed",
-    "deploy": "prisma migrate deploy",
-    "seed": "tsx --env-file-if-exists=../../.env.local src/seed.ts",
-    "typecheck": "tsc -p .",
-    "dev": "tsx src/pg.ts"
+    "dev": "tsx --env-file-if-exists=../../.env src/pg.ts",
+    "generate": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js generate",
+    "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
+    "migrate:new": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js migrate dev --skip-seed --name",
+    "studio": "node --env-file-if-exists=../../.env ../../node_modules/prisma/build/index.js studio",
+    "seed": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local src/seed.ts",
+    "typecheck": "tsc -p ."
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

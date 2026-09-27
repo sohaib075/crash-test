@@ -52,7 +52,7 @@ Source: `Crash_Test_Build_Plan.pdf` (v4, 26 Sep 2026). Code freeze **Sun 27 Sep 
 - Still unverified until the key arrives: real graph8 payload shapes (outbox, quote detail, org users, event types). `npm run gates` prints them.
 
 ## Go-live checklist (needs GRAPH8_API_KEY)
-1. [ ] Put the key in `.env.local`, then `npm run dev`
+1. [ ] Put the key in `.env`, then `npm run dev`
 2. [ ] `npm run gates`. **G1 green by 1:00 PM or switch to Baton.** Read the raw outbox and quote keys it prints; tighten `packages/core/src/graph8/normalize.ts` if a field is missing
 3. [ ] Set `OUTBOX_TIMEOUT_MS` / `NEGATIVE_WAIT_MS` from the measured send latency (2–3×)
 4. [ ] `npm run seed:graph8` (dry run) → check the payloads → `-- --apply`; set the 3 sequences live; clear 2 owners

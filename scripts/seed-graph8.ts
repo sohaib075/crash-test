@@ -34,8 +34,8 @@ async function doCall(label: string, op: string, input: Any) {
 }
 
 async function main() {
-  if (!config.apiKey) throw new Error("GRAPH8_API_KEY is not set in .env.local");
-  if (!owner) throw new Error("Set DEMO_OWNER_EMAIL (a current user in the workspace) in .env.local");
+  if (!config.apiKey) throw new Error("GRAPH8_API_KEY is not set in .env");
+  if (!owner) throw new Error("Set DEMO_OWNER_EMAIL (a current user in the workspace) in .env");
   const st = (await call("sandbox_status_sandbox_status_get")) as Any;
   if (st.sandbox !== true) throw new Error("Refusing to seed: this key is not a sandbox workspace.");
   console.log(`Sandbox org ${st.org_id}. Mode: ${apply ? "APPLY" : "DRY RUN"}`);

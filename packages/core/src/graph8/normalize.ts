@@ -20,7 +20,7 @@ export function normOutbox(i: Any): SentEmail {
 
 export function normUser(u: Any): OrgUser {
   const name = str(u.name, u.full_name, [u.first_name, u.last_name].filter(Boolean).join(" "));
-  const inactive = u.is_active === false || u.active === false || /deactiv|disabl|removed|left|suspend/i.test(str(u.status));
+  const inactive = u.enabled === false || u.is_active === false || u.active === false || /deactiv|disabl|removed|left|suspend/i.test(str(u.status));
   const aliases = [u.propel_auth_id, u.user_id, u.id, u.member_id].filter((x) => x != null && x !== "").map(String);
   return { id: str(u.propel_auth_id, u.user_id, u.id), email: str(u.email).toLowerCase(), name: name || str(u.email), active: !inactive, aliases };
 }

@@ -72,7 +72,12 @@ export async function planRun(q: Queue, runId: string) {
   await publish({ type: "run:updated", runId, status: "PLANNING" });
 
   const st = await getBackend().sandboxStatus();
-  if (!st.sandbox) throw new Error("Safety: this key is not a sandbox workspace; refusing to run.");
+  if (!st.sandbox) {
+    throw new Error(
+      `Safety: ${st.name ?? "this workspace"} is a ${st.keyMode ?? "live"}${st.writable ? "" : ", read-only"} key, not a graph8 developer sandbox. ` +
+        "Crash Test only runs fake buyers in a sandbox (the outbox exists only there). Add a sandbox key with write scopes to .env.",
+    );
+  }
   await runLog(runId, "Discovering sequences, steps, users, deals, quotes and booking links…");
   const { ws, workspaceId } = await discoverAndStore();
   if (process.env.GRAPH8_WORKSPACE_ID && ws.graph8Id && ws.graph8Id !== process.env.GRAPH8_WORKSPACE_ID) {
